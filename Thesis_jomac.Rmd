@@ -1,0 +1,4055 @@
+---
+title: "Turbulent Times"
+subtitle: "Thesis"
+author: "John MacQueen"
+date: "`r Sys.Date()`"
+papersize: a4
+geometry: margin=4cm
+colorlinks: true
+output:
+  pdf_document:
+    number_sections: true
+---
+
+```{r setup, include = FALSE}
+# Setup options for R Markdown
+knitr::opts_chunk$set(
+  echo       = FALSE,    # Do not print code
+  warning    = FALSE,    # Suppress warnings
+  message    = FALSE,    # Suppress messages
+  fig.align  = "center",       
+  fig.cap = " "
+)
+
+library(tidyverse)
+library(knitr)
+library(patchwork)
+library(Ecdat)
+library(tsibble)
+library(GGally)
+library(ggmosaic)
+library(dplyr)
+library(data.table)
+library(countrycode)
+library(tidyquant)
+library(ggdist)
+library(ggthemes)
+library(caret)
+library(randomForest)
+library(performanceEstimation)
+```
+
+
+```{r setup, include = FALSE}
+
+
+# Set a theme for ggplot2
+theme_set(theme_grey(base_size = 10))
+
+# Set options
+options(
+  digits = 3, # limit the number of significant digits
+  width  = 63, # limit the width of code output
+  fig.cap = " "
+)
+```
+
+
+```{r, include=FALSE}
+
+# load first dataset
+
+
+setwd('C:/Users/johnn/Desktop/R_projects/Thesis')
+
+final_regions <- read.csv("final_region_dataset.csv")
+
+final_dataset <- read.csv("final_dataset.csv")
+final_dataset <- final_dataset %>% select(., -"idnr", -"local_trust")
+final_dataset <- final_dataset %>%
+  mutate_all(~ifelse(. %in% c(99, 98, 97), NA, .))
+
+
+final_dataset <- final_dataset %>%
+  mutate(Region = as.factor(Region),
+         wind_invest = as.factor(wind_invest),
+         party_pref = as.factor(party_pref),
+         tot_hus_incom = as.factor(tot_hus_incom),
+         education = as.factor(education),
+         sex = as.factor(sex),
+         outdoor_org = outdoor_org,
+         env_org = env_org,
+         cult_soc = cult_soc,
+         trust_munic = trust_munic)
+
+final_dataset <- final_dataset %>%
+  mutate(trust_munic = case_when(
+    trust_munic == 1 ~ 3,
+    trust_munic == 2 ~ 3, #high
+    trust_munic == 3 ~ 2, #middle
+    trust_munic == 4 ~ 1, #low
+    trust_munic == 5 ~ 1,
+    TRUE ~ NA  # Keep the original value if none of the conditions match
+  ))
+
+final_dataset <- final_dataset %>%
+  mutate(cult_soc = case_when(
+    cult_soc == 1 ~ 0, #no
+    cult_soc == 2 ~ 1, #yes
+    cult_soc == 3 ~ 1,
+    cult_soc == 4 ~ 1,
+    TRUE ~ NA  # Keep the original value if none of the conditions match
+  ))
+
+final_dataset <- final_dataset %>%
+  mutate(env_org = case_when(
+    env_org == 1 ~ 0, #no
+    env_org == 2 ~ 1, #yes
+    env_org == 3 ~ 1,
+    env_org == 4 ~ 1,
+    TRUE ~ NA  # Keep the original value if none of the conditions match
+  ))
+
+final_dataset <- final_dataset %>%
+  mutate(outdoor_org = case_when(
+    outdoor_org == 1 ~ 0, #no
+    outdoor_org == 2 ~ 1, #yes
+    outdoor_org == 3 ~ 1,
+    outdoor_org == 4 ~ 1,
+    TRUE ~ NA  # Keep the original value if none of the conditions match
+  ))
+
+final_dataset <- final_dataset %>%
+  mutate(
+         outdoor_org = as.factor(outdoor_org),
+         env_org = as.factor(env_org),
+         cult_soc = as.factor(cult_soc),
+         trust_munic = as.factor(trust_munic)
+  )
+
+dt_2010_2014 <- final_dataset %>% filter(year %in% 2010:2014)
+
+dt_2014_2018 <- final_dataset %>% filter(year %in% 2014:2018)
+
+dt_2018_2021 <- final_dataset %>% filter(year %in% 2018:2021)
+
+
+dt_2010_2014 <- dt_2010_2014 %>% select(., -year)
+dt_2014_2018 <- dt_2014_2018 %>% select(., -year, -trust_munic)
+dt_2018_2021 <- dt_2018_2021 %>% select(., -year, -trust_munic)
+
+
+wind_vetoes_dta <- read.csv2("Westander_vind_project.csv", na.strings = "NA") # county level data
+veto_combined1 <- left_join(final_dataset,wind_vetoes_dta, by = "Region")
+veto_combined_final1 <- veto_combined1 %>% select(Region,veto_perc,wind_density,el_region,wind_invest,age,party_pref,
+                                                tot_hus_incom,education,sex,outdoor_org,env_org,cult_soc)
+veto_combined_final1$Region <- as.factor(veto_combined_final1$Region)
+veto_combined_final1$veto_perc <- as.factor(veto_combined_final1$veto_perc)
+veto_combined_final1$wind_density <- as.factor(veto_combined_final1$wind_density)
+
+
+
+# MissForest algorithm for dealing with NA's
+
+library(missForest)
+
+# Encode categorical variables if needed (e.g., using one-hot encoding)
+#matrix_2010_2014 <- model.matrix(~., data = dt_2010_2014)
+
+imputed_mf_all <- missForest(veto_combined_final1, maxiter = 5, ntree = 300, variablewise = FALSE,
+                       decreasing = FALSE, verbose = FALSE,
+                       mtry = floor(sqrt(ncol(veto_combined_final1))), replace = TRUE,
+                       maxnodes = NULL, nodesize = c(85,21),
+                       xtrue = NA, parallelize = c('no'))
+
+imp_all <- imputed_mf_all$ximp
+
+
+
+#balancing variable values
+library(performanceEstimation)
+
+balanced_all_wind_invest <- smote(wind_invest ~ ., imp_all, perc.over = 3, k = 12,
+                        perc.under = 1)
+
+
+summary(imp_all)
+summary(balanced_all_wind_invest)
+
+
+
+
+
+#a bit more balanced compared to prior class composition 
+
+write.csv(balanced_all_wind_invest, file = "C:/Users/johnn/Desktop/R_projects/Thesis/balanced_all_wind_invest.csv", row.names = FALSE)
+
+
+
+
+final_all_wind_invest <- read.csv("balanced_all_wind_invest.csv")
+
+
+
+final_all_wind_invest <- final_all_wind_invest %>%
+  mutate(Region = as.character(Region),
+         wind_invest = as.factor(wind_invest),
+         party_pref = as.factor(party_pref),
+         tot_hus_incom = as.factor(tot_hus_incom),
+         education = as.factor(education),
+         sex = as.factor(sex),
+         outdoor_org = as.factor(outdoor_org),
+         env_org = as.factor(env_org),
+         cult_soc = as.factor(cult_soc),
+         el_region = as.factor(el_region),
+         veto_perc = as.factor(veto_perc),
+         wind_density = as.factor(wind_density)
+  )
+final_all_wind_invest <- final_all_wind_invest %>%
+  mutate(Region = replace(Region, Region == "missing", NA))
+
+final_all_wind_invest <- drop_na(final_all_wind_invest)
+
+final_all_wind_invest <- final_all_wind_invest %>%
+  mutate(Region = as.factor(Region)
+  )
+
+final_all_wind_invest <- final_all_wind_invest %>%
+  select(., -el_region)
+
+#produce summary statistics 
+  
+sum_cats <- modelsummary::datasummary_skim(final_all_wind_invest, 
+                 type = "categorical",
+                 output = "markdown",
+                 title = "Summary Statistics for Categorical Variables",
+                 notes = "Contains combined data from SOM, Westander, and SCB datasets")
+
+
+
+modelsummary::datasummary_skim(final_all_wind_invest, 
+                 type = "numeric", 
+                 output = "default",
+                 title = "Summary Statistics for Numerical Variables",
+                 notes = "Contains combined data from SOM dataset",
+                 fun_numeric = list(Min = Min, Median = Median, Max = Max))
+
+#recombine all data for later PDP's
+#recomb_2010_2014 <- final_2010_2014 %>%
+  #mutate(election_period = "2010-2014")
+
+#recomb_2014_2018 <- final_2014_2018 %>%
+  #mutate(election_period = "2014-2018")
+
+#recomb_2018_2021 <- final_2018_2021 %>%
+ # mutate(election_period = "2018-2021")
+
+#recombined_df <- bind_rows(recomb_2010_2014, recomb_2014_2018, recomb_2018_2021)
+#recombined_df <- recombined_df %>% mutate(as.factor(election_period))
+#recombined_df <- recombined_df %>% rename("period" = `as.factor(election_period)`)
+#recombined_df <- recombined_df %>% select(., -"period", -"trust_munic")
+
+#combine together the individual level data and the regional level data
+
+#veto_combined <- left_join(recombined_df,wind_vetoes_dta, by = "Region")
+#veto_combined_final <- veto_combined %>% select(Region,perc_vetoed,term_pop,wind_density,el_region,wind_invest,age,party_pref,
+                                             #   tot_hus_incom,education,sex,outdoor_org,env_org,cult_soc)
+
+```
+
+
+
+
+
+
+
+
+```{r}
+
+library(randomForest)
+#for wind investment opinion outcomes
+set.seed(123456)
+
+
+# Use cross-validation to determine the best number of trees
+num_trees2 <- c(5, 10, 15,50, 100, 150, 200, 250, 300)  # You can adjust this range based on your needs
+num_folds2 <- createFolds(final_all_wind_invest$wind_invest, k = 10, list = TRUE)  # Number of folds for cross-validation
+
+
+
+# Function to perform cross-validation and calculate accuracy
+calculate_accuracy2 <- function(num_trees2, data, folds) {
+  accuracy_values <- numeric(length(num_trees2))
+  for (i in seq_along(num_trees2)) {
+    accuracy_fold <- numeric(length(folds))
+    for (fold in seq_along(folds)) {
+      train_indices <- unlist(folds[-fold])
+      test_indices <- unlist(folds[fold])
+      
+      train_data <- data[train_indices, ]
+      test_data <- data[test_indices, ]
+      
+      rf_model <- randomForest(wind_invest ~ ., data = train_data, importance = TRUE, ntree = num_trees2[i])
+      predictions <- predict(rf_model, newdata = test_data)
+      
+      
+      accuracy_fold[fold] <- sum(predictions == test_data$wind_invest) / length(test_data$wind_invest)
+    }
+    accuracy_values[i] <- mean(accuracy_fold)
+  }
+  return(accuracy_values)
+}
+
+# Calculate accuracy for different numbers of trees
+accuracy_values2 <- calculate_accuracy2(num_trees2, final_all_wind_invest, num_folds2) # could argue for 50 or 100
+
+
+# Plot the elbow curve
+plot(num_trees2, accuracy_values2, type = "b", main = "CV for Random Forest Classification of Wind Power Opinions", 
+     xlab = "Number of Trees", ylab = "Accuracy", sub = "Predictive accuracy of wind opinion categories")
+
+# Determine the best number of trees (where accuracy is maximized)
+best_num_trees2 <- num_trees2[which.max(accuracy_values2)]
+cat("Best number of trees:", best_num_trees2, "\n")
+
+
+# Train the random forest model with the best number of trees
+final_rf_model1 <- randomForest(wind_invest ~ ., data = final_all_wind_invest, 
+                               ntree = 150,
+                               importance = TRUE)
+
+final_rf_model1
+# Extract variable importance from the trained random forest model
+variable_importance2 <- importance(final_rf_model1)
+
+# Sort variables by importance
+sorted_importance2 <- variable_importance2[order(-variable_importance2[, 1]), ]
+sorted_importance2 <- as.data.frame(sorted_importance2)
+sorted_importance2 <- sorted_importance2 %>% select(1,2,3,4)
+sorted_importance2 <- rownames_to_column(sorted_importance2, var = "vars")
+
+
+sorted_importance2 <- sorted_importance2 %>% select(., - "0", -"1", -"MeanDecreaseAccuracy")
+
+
+# Plot the variable importance
+
+library(reshape2)
+var_imp_plot <- melt(sorted_importance2, id.vars = "vars")
+
+# Plot using ggplot
+ggplot(var_imp_plot, aes(x = reorder(vars, -value), y = value, fill = vars)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Variables", y = "Mean Decrease", fill = "Variables", caption = "Model 1: Predicted importance of variables on wind investment opinions") +
+  ggtitle("Mean Decrease in Accuracy and Node Impurity (Gini) by Variable") +
+  theme_minimal() +
+  facet_wrap(~variable, scales = "free") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+# create partial dependence plots for RF classification problems on the probability scale
+library(pdp)
+# class 2 = 2nd column in confusion matrix (1:in favour of increased wind investment)
+# class 1 = 1st column in confusion matrix (0: not in favour of increased wind investment)
+
+party_reg_pdp2 <- partial(final_rf_model1, pred.var = c("party_pref","Region"), data = final_all_wind_invest, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = party_pref, colour = party_pref) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),legend.position = "none") +
+  labs(x = "Political Party voted for in last election", 
+       y = "Pred Prob of being against wind investment", 
+       title = "Partial Dependency Plot: Against wind investment by county and party choice",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment,
+       dependent on county and party choice?")
+
+#region
+reg_pdp2 <- partial(final_rf_model1, pred.var = c("Region"), data = final_all_wind_invest, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = Region, colour = Region) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),legend.position = "none") +
+  labs(x = "County of residence", 
+       y = "Pred Prob of being against wind investment", 
+       title = "Partial Dependency Plot: Against wind investment by county",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment,
+       dependent on county?")
+
+#party
+party_pdp2 <- partial(final_rf_model1, pred.var = c("party_pref"), data = final_all_wind_invest, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = party_pref, colour = party_pref) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Political party preference", 
+       y = "Pred Prob of being against wind investment", 
+       title = "Partial Dependency Plot: Against wind investment by party preference",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment,
+       dependent on party preference?")
+
+
+#age
+age_pdp2 <- partial(final_rf_model1, pred.var = c("age"), data = final_all_wind_invest, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Age in years", 
+       y = "Pred Prob of being against wind investment", 
+       title = "Partial Dependency Plot: Against wind investment by age",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment,
+       dependent on age?")
+
+age_reg_pdp2 <- partial(final_rf_model1, pred.var = c("age","Region"), data = final_all_wind_invest, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Age in years", 
+       y = "Pred Prob of being against wind investment", 
+       title = "Partial Dependency Plot: Against wind investment by age",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment,
+       dependent on age?")
+
+#cult_soc
+cult_soc_pdp1 <- partial(final_rf_model1, pred.var = c("cult_soc","Region"), data = final_2010_2014, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = cult_soc, colour = cult_soc) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Member of a Cultural Society", 
+       y = "Pred Prob of being against increased wind investment", 
+       title = "Cultural Society Membership: Partial Dependency Plot for 2010-2021",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment?")
+
+#outdoor_org
+outdoor_org_pdp1 <- partial(final_rf_model1, pred.var = c("outdoor_org","Region"), data = final_2010_2014, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = outdoor_org, colour = outdoor_org) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Member of Outdoor Organisation", 
+       y = "Pred Prob of being against increased wind investment", 
+       title = "Outdoor Organisation Membership: Partial Dependency Plot for 2010-2014 (model 1)",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment?")
+
+#outdoor_org
+outdoor_org_pdp1 <- partial(final_rf_model1, pred.var = c("outdoor_org","Region"), data = final_2010_2014, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = outdoor_org, colour = outdoor_org) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Member of Outdoor Organisation", 
+       y = "Pred Prob of being against increased wind investment", 
+       title = "Outdoor Organisation Membership: Partial Dependency Plot for 2010-2014 (model 1)",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment?")
+
+#tot_hus_incom
+income_pdp1 <- partial(final_rf_model1, pred.var = c("tot_hus_incom","Region"), data = final_2010_2014, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = tot_hus_incom, colour = tot_hus_incom) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Household Income Level", 
+       y = "Pred Prob of being against increased wind investment", 
+       title = "Household Income: Partial Dependency Plot for 2010-2014 (model 1)",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment?")
+
+#education
+edu_pdp1 <- partial(final_rf_model1, pred.var = c("education","Region"), data = recombined_df, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = education, colour = education) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Household Income Level", 
+       y = "Pred Prob of being against increased wind investment", 
+       title = "Household Income: Partial Dependency Plot for 2010-2014 (model 1)",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment?")
+
+party_dta1 <- el_region_pref_pdp2$data
+party_dta2 <- el_region_pref_pdp3$data
+party_dta3 <- el_region_pref_pdp4$data
+
+party_dta1 <- party_dta1 %>% mutate(year_range = "2010")
+party_dta2 <- party_dta2 %>% mutate(year_range = "2015")
+party_dta3 <- party_dta3 %>% mutate(year_range = "2020")
+
+# Combine the datasets together
+combined_pdps <- bind_rows(party_dta1, party_dta2, party_dta3)
+
+combined_pdps %>% 
+  ggplot(aes(x = party_pref, y = yhat, fill = party_pref, colour = year_range, shape = NULL)) +  # Remove shape mapping
+  geom_text(aes(label = year_range), position = position_dodge(width = 0.2), vjust = -0.5, size = 2.3) +  # Add text labels
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_wrap(~ Region, ncol = 4) +
+  labs(x = "Party Preferance", 
+       y = "Pred Prob of being against increased wind investment", 
+       title = "Party Preferance: Partial Dependency Plot for 2010-2024",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment?")
+
+
+
+
+#Now regression random forest model (percentage of wind projects vetoed)
+edu_pdp1 <- partial(final_rf_model1, pred.var = c("wind_invest","Region"), data = recombined_df, type = "regression", 
+                    trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = education, colour = education) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Household Income Level", 
+       y = "Pred Prob of being against increased wind investment", 
+       title = "Household Income: Partial Dependency Plot for 2010-2014 (model 1)",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment?")
+
+```
+
+############################### County level veto outcomes #################################
+
+
+```{r}
+
+# Group by county and calculate summary statistics for categorical variables
+
+library(dplyr)
+
+# Function to calculate mode
+calculate_mode <- function(x) {
+  tbl <- table(x)
+  mode_val <- names(tbl)[which.max(tbl)]
+  return(mode_val)
+}
+
+# Aggregate data by region and calculate counts for each category within each variable
+county_agg <- final_all_wind_invest %>%
+  group_by(Region) %>%
+  summarise(mean_age = mean(age),  # Calculate mean age (use "reframe" in the future)
+            veto_perc = veto_perc,
+            low_wind_dens = sum(wind_density == "1"),
+            med_wind_dens = sum(wind_density == "2"),
+            high_wind_dens = sum(wind_density == "3"),
+            less_wind = sum(wind_invest == "0"),
+            more_wind = sum(wind_invest == "1"),
+            SocDem = sum(party_pref == "SocDem"),
+            Mod = sum(party_pref == "Mod"),
+            KD = sum(party_pref == "KD"),
+            Left = sum(party_pref == "Left"),
+            Green = sum(party_pref == "Green"),
+            Centre = sum(party_pref == "Centre"),
+            Lib = sum(party_pref == "Lib"),
+            SD = sum(party_pref == "SD"),
+            low_income = sum(tot_hus_incom == "1"),
+            med_income = sum(tot_hus_incom == "2"),
+            high_income = sum(tot_hus_incom == "3"),
+            low_edu = sum(education == "1"),
+            med_edu = sum(education == "2"),
+            high_edu = sum(education == "3"),
+            male = sum(sex == "0"),
+            female = sum(sex == "1"),
+            no_outoor = sum(outdoor_org == "0"),
+            yes_outoor = sum(outdoor_org == "1"),
+            no_environment = sum(env_org == "0"),
+            yes_environment = sum(env_org == "1"),
+            no_cultural = sum(cult_soc == "0"),
+            yes_cultural = sum(cult_soc == "1"),
+            
+          
+            )
+
+
+```
+
+
+```{r}
+library(randomForest)
+#for veto outcomes
+set.seed(123456)
+
+
+# Use cross-validation to determine the best number of trees
+num_trees2 <- c(5, 10, 15,50, 100, 150, 200, 250, 300)  # You can adjust this range based on your needs
+num_folds3 <- createFolds(county_agg$veto_perc, k = 10, list = TRUE)  # Number of folds for cross-validation
+
+
+
+# Function to perform cross-validation and calculate accuracy
+calculate_accuracy3 <- function(num_trees2, data, folds) {
+  accuracy_values <- numeric(length(num_trees2))
+  for (i in seq_along(num_trees2)) {
+    accuracy_fold <- numeric(length(folds))
+    for (fold in seq_along(folds)) {
+      train_indices <- unlist(folds[-fold])
+      test_indices <- unlist(folds[fold])
+      
+      train_data <- data[train_indices, ]
+      test_data <- data[test_indices, ]
+      
+      rf_model <- randomForest(veto_perc ~ ., data = train_data, ntree = num_trees2[i])
+      predictions <- predict(rf_model, newdata = test_data)
+      
+      
+      accuracy_fold[fold] <- sum(predictions == test_data$veto_perc) / length(test_data$veto_perc)
+    }
+    accuracy_values[i] <- mean(accuracy_fold)
+  }
+  return(accuracy_values)
+}
+
+# Calculate accuracy for different numbers of trees
+accuracy_values3 <- calculate_accuracy3(num_trees2, county_agg, num_folds3) # could also argue for 50 or 150
+
+
+# Plot the elbow curve
+plot(num_trees2, accuracy_values3, type = "b", main = "CV for Random Forest Classification of Veto Usage", 
+     xlab = "Number of Trees", ylab = "Accuracy", sub = "Predictive accuracy of veto usage categories")
+
+# Determine the best number of trees (where accuracy is maximized)
+best_num_trees3 <- num_trees2[which.max(accuracy_values2)]
+cat("Best number of trees:", best_num_trees3, "\n")
+
+# try with only most important variables so as too reduce noise:
+
+most_important_features <- county_agg %>% select(veto_perc, med_wind_dens, high_wind_dens, low_wind_dens,Region, 
+                                                 mean_age, yes_cultural, Centre,KD, Lib, Mod, Left, SD, SocDem, Green,
+                                                 more_wind,less_wind)
+
+# Train the random forest model with the best number of trees
+final_rf_model2 <- randomForest(veto_perc ~ ., data = most_important_features, 
+                               ntree = 50,
+                               strata = Region,
+                               importance = TRUE)
+
+final_rf_model2
+# Extract variable importance from the trained random forest model
+variable_importance3 <- importance(final_rf_model2)
+
+# Sort variables by importance
+sorted_importance3 <- variable_importance3[order(-variable_importance3[, 1]), ]
+sorted_importance3 <- as.data.frame(sorted_importance3)
+#sorted_importance3 <- sorted_importance3 %>% select(1,2,3,4)
+sorted_importance3 <- rownames_to_column(sorted_importance3, var = "vars")
+sorted_importance3 <- sorted_importance3 %>% select(., - "1", -"2",-"3",-"4", -"MeanDecreaseAccuracy")
+
+
+sorted <- variable_importance3[order(-variable_importance3[, 1]), ]
+sorted <- as.data.frame(sorted)
+sorted <- rownames_to_column(sorted, var = "vars")
+sorted <- sorted %>% select(., - "MeanDecreaseAccuracy", -"MeanDecreaseGini")
+
+
+# Plot the variable importance
+#first create custom functions to allow ordered descending values within each facet
+#(for some reason this does not exist)
+reorder_within <- function(x, by, within, fun = mean, sep = "___", ...) {
+  new_x <- paste(x, within, sep = sep)
+  stats::reorder(new_x, by, FUN = fun)
+}
+
+scale_x_reordered <- function(..., sep = "___") {
+  reg <- paste0(sep, ".+$")
+  ggplot2::scale_x_discrete(labels = function(x) gsub(reg, "", x), ...)
+}
+
+library(reshape2)
+var_imp_plot2 <- melt(sorted_importance3, id.vars = "vars")
+
+# Plot mean decrease in node impurity
+ggplot(var_imp_plot2, aes(x = reorder(vars, -value), y = value, fill = vars)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Variables", y = "Mean Decrease", fill = "Variables", caption = "Model 3: Importance of variables on veto usage") +
+  ggtitle("Mean Decrease in Node Impurity (Gini) by Variable after feature selection") +
+  theme_minimal() +
+  facet_wrap(~variable, scales = "free") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
+
+
+
+# plot importance for each outcome class
+var_imp_plot3 <- melt(sorted, id.vars = "vars")
+
+ggplot(var_imp_plot3, aes(x = reorder_within(vars, -value, value), y = value, fill = vars)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Variables", y = "Mean Decrease", fill = "Variables", caption = "Predicted importance of variables on each class of veto usage. Very low (1), Low (2), Medium (3), High (4)") +
+  ggtitle("Variable Importance for each class of veto percentage") +
+  theme_minimal() +
+  facet_wrap(~variable, scales = "free_x") +
+  scale_x_reordered() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 7), legend.position = "none")
+
+library(pdp)
+
+
+party_reg_pdp3 <- partial(final_rf_model2, pred.var = c("med_wind_dens"), data = county_agg, type = "classification", prob = TRUE,
+        which.class = 4, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = med_wind_dens, colour = med_wind_dens) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),legend.position = "none") +
+  labs(x = "Political Party voted for in last election", 
+       y = "Pred Prob of a high veto percentage", 
+       title = "Partial Dependency Plot: Veto Percentage by party choice",
+       caption = "Holding all else constant, what is the predicted probability of a high municipal veto percentage, dependent on party choice?")
+
+#wind_invest opinion
+wind_invest_pdp3 <- partial(final_rf_model2, pred.var = c("wind_invest"), data = final_all_wind_invest, type = "classification", prob = TRUE,
+        which.class = 4, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Wind investment opinion: Less (0), More (1)", 
+       y = "Pred Prob of high veto %", 
+       title = "Partial Dependency Plot: High veto percentage by wind investment opinions",
+       caption = "Holding all else constant, what is the predicted probability of high veto percentage, dependent on wind investment opinions?")
+
+#wind_density
+density_pdp3 <- partial(final_rf_model2, pred.var = c("wind_density"), data = final_all_wind_invest, type = "classification", prob = TRUE,
+        which.class = c(3,4), trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = wind_density, colour = wind_density) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),legend.position = "none") +
+  labs(x = "Wind Density", 
+       y = "Pred Prob of high veto %", 
+       title = "Partial Dependency Plot: High veto percentage by wind density",
+       caption = "Holding all else constant, what is the predicted probability of high veto percentage, depdendent on wind density?")
+
+#party
+party_pdp3 <- partial(final_rf_model2, pred.var = c("party_pref"), data = final_all_wind_invest, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = party_pref, colour = party_pref) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Political party preference", 
+       y = "Pred Prob of being against wind investment", 
+       title = "Partial Dependency Plot: Against wind investment by party preference",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment,
+       dependent on party preference?")
+
+
+#age
+age_pdp3 <- partial(final_rf_model2, pred.var = c("age"), data = final_all_wind_invest, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Age in years", 
+       y = "Pred Prob of being against wind investment", 
+       title = "Partial Dependency Plot: Against wind investment by age",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment,
+       dependent on age?")
+
+age_reg_pdp3 <- partial(final_rf_model2, pred.var = c("age","Region"), data = final_all_wind_invest, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Age in years", 
+       y = "Pred Prob of being against wind investment", 
+       title = "Partial Dependency Plot: Against wind investment by age",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment,
+       dependent on age?")
+
+
+
+```
+
+
+
+
+```{r}
+
+
+
+
+
+
+
+
+
+
+
+#frequency heatmap of party choice by wind investment opinions
+
+# Create a cross-tabulation of the two categorical variables
+cross_tab <- table(recombined_df$wind_invest, recombined_df$party_pref)
+
+# Convert the cross-tabulation to a matrix
+cross_tab_matrix <- as.matrix(cross_tab)
+
+# Create a heatmap using ggplot2
+heatmap <- ggplot(data = as.data.frame(cross_tab_matrix), aes(x = Var2, y = Var1, fill = Freq)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +  # Adjust color gradient as needed
+  labs(title = "Heatmap of Frequency of wind investment opinions by party choice",
+       x = "Party choice",
+       y = "Increased wind investment",
+       fill = "Frequency") +
+  theme_minimal()
+
+
+cross_tab2 <- table(recombined_df$wind_invest, recombined_df$Region)
+
+# Convert the cross-tabulation to a matrix
+cross_tab_matrix2 <- as.matrix(cross_tab2)
+
+# Create a heatmap using ggplot2
+heatmap2 <- ggplot(data = as.data.frame(cross_tab_matrix2), aes(x = Var2, y = Var1, fill = Freq)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +  # Adjust color gradient as needed
+  labs(title = "Heatmap of Frequency of wind investment opinions by party choice",
+       x = "Party choice",
+       y = "Increased wind investment",
+       fill = "Frequency") +
+  theme_minimal()
+
+#corellation matrix
+
+library(Hmisc)
+
+
+
+# Separate continuous and categorical variables
+continuous_vars <- subset(recombined_df, select = sapply(recombined_df, is.numeric))
+categorical_vars <- subset(recombined_df, select = sapply(recombined_df, is.factor))
+
+# Compute correlation matrix for continuous variables using Pearson correlation
+cor_continuous <- cor(continuous_vars)
+
+# Create contingency tables for each pair of categorical variables
+contingency_tables <- lapply(categorical_vars, function(x) {
+  table(x)
+})
+
+# Compute chi-square tests for independence for each contingency table
+chi_square_results <- lapply(contingency_tables, function(table) {
+  chisq.test(table)
+})
+
+# Extract the chi-square statistics from the results
+chi_square_statistics <- sapply(chi_square_results, function(result) {
+  result$statistic
+})
+
+# Transpose the chi-square statistics matrix
+chi_square_statistics <- t(matrix(chi_square_statistics))
+
+# Combine the correlation and chi-square statistics into a single matrix
+combined_matrix <- cbind(cor_continuous, chi_square_statistics)
+
+library(corrplot)
+
+# Visualize the combined correlation matrix
+# Get the variable names for the chi-square statistics
+variable_names <- names(contingency_tables)
+
+barplot(chi_square_statistics, 
+        main = "Chi-Square Statistics", 
+        xlab = "Variable", 
+        ylab = "Chi-Square Statistic", 
+        col = "skyblue",
+        names.arg = variable_names,
+        las = 2)  # Rotate the x-axis labels vertically for better readability
+
+# Perform chi-square test for independence for each pair of categorical variables
+chi_square_results <- lapply(categorical_vars, function(var) {
+  chisq.test(var, categorical_vars[[1]])
+})
+
+# Extract p-values from the chi-square test results
+p_values <- sapply(chi_square_results, function(result) {
+  result$p.value
+})
+
+library(kableExtra)
+
+p_values_table <- data.frame(Variable = variable_names, P_Value = p_values, row.names = NULL)
+
+# Print the table
+print(p_values_table)
+
+chi_sq_kable <- kable(p_values_table, format = "latex", col.names = c("Variable", "P Value"),
+      caption = "Chi-Squared Test P-Values",
+      align = "c",
+      label = "Table 1",
+      digits = 100)
+
+
+# Convert the table to an image
+chi_tbl_image <- as_image(chi_sq_kable)
+
+# Save the image as a PNG file
+ggsave("chi.png", chi_sq_kable)
+
+
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+
+
+#same but using SOM data 2014-2018
+
+set.seed(12345)
+
+# Use cross-validation to determine the best number of trees
+num_trees3 <- c(5, 10, 15,50, 100, 150, 200, 250, 300)  # You can adjust this range based on your needs
+num_folds3 <- createFolds(final_2014_2018$wind_invest, k = 10, list = TRUE)  # Number of folds for cross-validation
+
+
+# Calculate accuracy for different numbers of trees
+accuracy_values3 <- calculate_accuracy2(num_trees3, final_2014_2018, num_folds3) # 150
+
+# Plot the elbow curve
+plot(num_trees3, accuracy_values3, type = "b", main = "CV for Random Forest Classification: Model 2", 
+     xlab = "Number of Trees", ylab = "Accuracy")
+
+# Determine the best number of trees (where accuracy is maximized)
+best_num_trees3 <- num_trees3[which.max(accuracy_values3)]
+cat("Best number of trees:", best_num_trees3, "\n")
+
+
+
+# Train the random forest model with the best number of trees
+final_rf_model2 <- randomForest(wind_invest ~ ., data = final_2014_2018, 
+                               ntree = 150,
+                               importance = TRUE)
+
+# Extract variable importance from the trained random forest model
+variable_importance3 <- importance(final_rf_model2)
+
+# Sort variables by importance
+sorted_importance3 <- variable_importance3[order(-variable_importance3[, 1]), ]
+sorted_importance3 <- as.data.frame(sorted_importance3)
+sorted_importance3 <- sorted_importance3 %>% select(1,2,3,4)
+sorted_importance3 <- rownames_to_column(sorted_importance3, var = "vars")
+
+
+sorted_importance3
+
+
+# Plot the variable importance
+library(reshape2)
+var_imp_plot2 <- melt(sorted_importance3, id.vars = "vars")
+
+# Plot using ggplot
+ggplot(var_imp_plot2, aes(x = reorder(vars, value), y = value, fill = vars)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Variables", y = "Mean Decrease", fill = "Variables", caption = "Model 2: Election period 2014-2018") +
+  ggtitle("Mean Decrease in Accuracy and Node Impurity (Gini) by Variable") +
+  theme_minimal() +
+  facet_wrap(~variable, scales = "free") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+el_region_pref_pdp3 <- partial(final_rf_model2, pred.var = c("party_pref","Region"), data = final_2014_2018, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = party_pref, colour = party_pref) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Political Party voted for in last election", 
+       y = "Pred Prob of being against increased wind investment", 
+       title = "Partial Dependency Plot for 2014-2018 (model 2)",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment?")
+
+
+#cult_soc
+cult_soc_pdp2 <- partial(final_rf_model2, pred.var = c("cult_soc","Region"), data = final_2014_2018, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = cult_soc, colour = cult_soc) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Member of a Cultural Society", 
+       y = "Pred Prob of being against increased wind investment", 
+       title = "Cultural Society Membership: Partial Dependency Plot for 2014-2018 (model 2)",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment?")
+
+#outdoor_org
+outdoor_org_pdp2 <- partial(final_rf_model2, pred.var = c("outdoor_org","Region"), data = final_2014_2018, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = outdoor_org, colour = outdoor_org) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Member of Outdoor organisation", 
+       y = "Pred Prob of being against increased wind investment", 
+       title = "Outdoor Organisation Membership: Partial Dependency Plot for 2014-2018 (model 2)",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment?")
+
+#tot_hus_incom
+income_pdp2 <- partial(final_rf_model2, pred.var = c("tot_hus_incom","Region"), data = final_2014_2018, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = tot_hus_incom, colour = tot_hus_incom) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Household Income Level", 
+       y = "Pred Prob of being against increased wind investment", 
+       title = "Household Income: Partial Dependency Plot for 2014-2018 (model 2)",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment?")
+
+#education
+edu_pdp2 <- partial(final_rf_model2, pred.var = c("education","Region"), data = final_2014_2018, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = education, colour = education) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Household Income Level", 
+       y = "Pred Prob of being against increased wind investment", 
+       title = "Household Income: Partial Dependency Plot for 2014-2018 (model 2)",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment?")
+
+
+#do this again but for interaction effect between for example age and party choice on wind power opinions
+# dont differentiate by county
+```
+
+
+```{r}
+
+library(pdp)
+
+#same but using SOM data 2018-2021
+
+set.seed(12345)
+
+# Use cross-validation to determine the best number of trees
+num_trees4 <- c(5, 10, 15,50, 100, 150, 200, 250, 300)  # You can adjust this range based on your needs
+num_folds4 <- createFolds(final_2018_2021$wind_invest, k = 10, list = TRUE)  # Number of folds for cross-validation
+
+
+# Calculate accuracy for different numbers of trees
+accuracy_values4 <- calculate_accuracy2(num_trees4, final_2018_2021, num_folds4) # 150
+
+# Plot the elbow curve
+plot(num_trees4, accuracy_values4, type = "b", main = "CV for Random Forest Classification: Model 3", 
+     xlab = "Number of Trees", ylab = "Accuracy")
+
+# Determine the best number of trees (where accuracy is maximized)
+best_num_trees3 <- num_trees4[which.max(accuracy_values4)]
+cat("Best number of trees:", best_num_trees3, "\n")
+
+
+
+# Train the random forest model with the best number of trees
+final_rf_model3 <- randomForest(wind_invest ~ ., data = final_2010_2014, 
+                               ntree = 150,
+                               importance = TRUE)
+
+# Extract variable importance from the trained random forest model
+variable_importance4 <- importance(final_rf_model3)
+
+# Sort variables by importance
+sorted_importance4 <- variable_importance4[order(-variable_importance4[, 1]), ]
+sorted_importance4 <- as.data.frame(sorted_importance4)
+sorted_importance4 <- sorted_importance4 %>% select(1,2,3,4)
+sorted_importance4 <- rownames_to_column(sorted_importance4, var = "vars")
+
+
+sorted_importance4
+
+
+# Plot the variable importance
+library(reshape2)
+var_imp_plot3 <- melt(sorted_importance4, id.vars = "vars")
+
+# Plot using ggplot
+ggplot(var_imp_plot3, aes(x = reorder(vars, value), y = value, fill = vars)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Variables", y = "Mean Decrease", fill = "Variables", caption = "Model 3: Election period 2018-2021") +
+  ggtitle("Mean Decrease in Accuracy and Node Impurity (Gini) by Variable") +
+  theme_minimal() +
+  facet_wrap(~variable, scales = "free") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+el_region_pref_pdp4 <- partial(final_rf_model3, pred.var = c("party_pref","Region"), data = final_2018_2021, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = party_pref, colour = party_pref) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Political Party voted for in last election", 
+       y = "Pred Prob of being against increased wind investment", 
+       title = "Partial Dependency Plot for 2018-2021 (model 3)",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment?")
+
+#cult_soc
+cult_soc_pdp3 <- partial(final_rf_model3, pred.var = c("cult_soc","Region"), data = final_2018_2021, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = cult_soc, colour = cult_soc) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Member of a Cultural Society", 
+       y = "Pred Prob of being against increased wind investment", 
+       title = "Cultural Society Membership: Partial Dependency Plot for 2018-2021 (model 3)",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment?")
+
+#outdoor_org
+outdoor_org_pdp3 <- partial(final_rf_model3, pred.var = c("outdoor_org","Region"), data = final_2018_2021, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = outdoor_org, colour = outdoor_org) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Member of Outdoor Organisation", 
+       y = "Pred Prob of being against increased wind investment", 
+       title = "Outdoor Organisation Membership: Partial Dependency Plot for 2018-2021 (model 3)",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment?")
+
+#tot_hus_incom
+income_pdp3 <- partial(final_rf_model3, pred.var = c("tot_hus_incom","Region"), data = final_2018_2021, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = tot_hus_incom, colour = tot_hus_incom) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Household Income Level", 
+       y = "Pred Prob of being against increased wind investment", 
+       title = "Household Income: Partial Dependency Plot for 2014-2018 (model 2)",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment?")
+
+#education
+edu_pdp3 <- partial(final_rf_model3, pred.var = c("education","Region"), data = final_2018_2021, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = education, colour = education) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Household Income Level", 
+       y = "Pred Prob of being against increased wind investment", 
+       title = "Household Income: Partial Dependency Plot for 2018-2021 (model 3)",
+       caption = "Holding all else constant, what is the predicted probability of being against increased wind investment?")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+SOM_data <- read.csv('SOM_Data_1986_2021.csv')
+
+veto_data <- read.csv2('Westander_Kommunala_vetot_per_kommun.csv')
+
+
+som_2021_filtered <- SOM_data %>%
+  filter(year %in% c("2010","2011","2012","2013",
+                     "2014","2015","2016","2017","2018","2019","2020","2021","2022"))
+
+som_2021 <- som_2021_filtered %>%
+  select(idnr,year,lan,age,sex,mstatus,edu3,edu2004,edu2020,unionm,unionm2012,unionm_open,sector,sector2009,hinc3rel,hinc5rel,oinc4rel,cityrur,natgeo,
+         aa10a,aa10i,aa10k,aa10o,
+         ac10a,ac10b,
+         ba10,ba900b,ba900c,
+         ca100d,cb15,cb20,cc11ae,cc11ao,cc11as,cc11av,cc11ax,cc11ar,
+         ca100c,ca100b,
+         cb10,
+         ce900a,
+         ea151b,
+         fb212a,fb212a,
+         ga10g,ga10q,
+         ha10,
+         ha200a,ha200b,ha200c,ha200d,ha200f,ha200h,ha200i,
+         hb10_2020, 
+         mf10,
+         mb99b,mb99a,mb99d,mb60b,mb60a,mb60f,mb99f, mb99i,
+         ma30g,ma10b,ma10a, ma10c,
+         ld10e,
+         ka502t,ka10s,ka10m,
+         ia10d)
+
+som_2021 <- som_2021 %>%
+  mutate(
+    lan = case_when(
+      lan == 1 ~ "stockholm",
+      lan == 3 ~ "uppsala",
+      lan == 4 ~ "södermanland",
+      lan == 5 ~ "östergötland",
+      lan == 6 ~ "jönköping",
+      lan == 7 ~ "kronoberg",
+      lan == 8 ~ "kalmar",
+      lan == 9 ~ "gotland",
+      lan == 10 ~ "blekinge",
+      lan == 12 ~ "skåne",
+      lan == 13 ~ "halland",
+      lan == 14 ~ "västra_götaland",
+      lan == 17 ~ "värmland",
+      lan == 18 ~ "örebro",
+      lan == 19 ~ "västmanland",
+      lan == 20 ~ "dalarna",
+      lan == 21 ~ "gävleborg",
+      lan == 22 ~ "västernorrland",
+      lan == 23 ~ "jämtland",
+      lan == 24 ~ "västerbotten",
+      lan == 25 ~ "norrbotten",
+      lan == 99 ~ "missing",
+      TRUE ~ as.character(lan)
+    ),
+    lan = factor(lan, levels = c(
+      "stockholm", "uppsala", "södermanland", "östergötland", "jönköping",
+      "kronoberg", "kalmar", "gotland", "blekinge", "skåne", "halland",
+      "västra_götaland", "värmland", "örebro", "västmanland", "dalarna",
+      "gävleborg", "västernorrland", "jämtland", "västerbotten", "norrbotten", "missing"
+    ))
+  )
+
+
+
+
+som_2021 <- som_2021 %>%
+  mutate(
+    cb10 = case_when(
+      cb10 == 1 ~ "Left",
+      cb10 == 2 ~ "SocDem",
+      cb10 == 3 ~ "Centre",
+      cb10 == 4 ~ "Lib",
+      cb10 == 5 ~ "Mod",
+      cb10 == 6 ~ "KD",
+      cb10 == 7 ~ "Green",
+      cb10 == 10 ~ "SD",
+      cb10 %in% c(11, 12, 13, 14, 99, 98, 30, 97) ~ NA_character_,
+      TRUE ~ as.character(cb10)
+    ),
+    cb10 = factor(cb10, levels = c("Left", "SocDem", "Centre", "Lib", "Mod", "KD", "Green", "SD"))
+  )
+
+
+
+
+
+# 1 = same or more
+# 2 = less or none
+som_2021 <- som_2021 %>%
+  mutate(
+    ha200b = case_when(
+      ha200b %in% c(1) ~ 1,  # 1 or 2 becomes 1
+      ha200b %in% c(2, 3, 4) ~ 0,  # 3 or 4 becomes 0
+      ha200b %in% c(99, 98, 97, 96, 5) ~ NA,  # specified values become NA
+      TRUE ~ NA  # any other value becomes NA
+    ),
+    ha200b = as.factor(ha200b)  # Convert to numeric if needed
+  )
+
+
+
+som_2021 <- som_2021 %>%
+  mutate(
+  hinc3rel = case_when(
+    hinc3rel == 99 ~ NA,
+    hinc3rel == 98 ~ NA,
+    hinc3rel == 96 ~ NA,
+    TRUE ~ as.factor(hinc3rel)
+  )
+)
+
+
+som_2021 <- som_2021 %>%
+  mutate(
+  edu3 = case_when(
+    edu3 == 99 ~ NA,
+    TRUE ~ as.factor(edu3)
+  )
+)
+
+
+
+som_2021 <- som_2021 %>%
+  mutate(
+    sex = case_when(
+      sex %in% c(1) ~ 1,  # 
+      sex %in% c(2) ~ 0,  # 
+      sex %in% c(99, 3) ~ NA,  # specified values become NA
+      TRUE ~ NA  # any other value becomes NA
+    ),
+    sex = as.factor(sex)  # Convert to numeric if needed
+  )
+
+som_2021$sex <- factor(som_2021$sex, levels = c(0, 1), labels = c("0", "1"))
+
+
+som_2021 <- som_2021 %>% rename(Region = lan)
+som_2021 <- som_2021 %>% rename(wind_invest = ha200b)
+som_2021 <- som_2021 %>% rename(party_pref = cb10)
+som_2021 <- som_2021 %>% rename(tot_hus_incom = hinc3rel)
+som_2021 <- som_2021 %>% rename(education = edu3)
+som_2021 <- som_2021 %>% rename(local_trust = ac10b)
+som_2021 <- som_2021 %>% rename(sat_dem_reg = ca100c)
+som_2021 <- som_2021 %>% rename(sat_dem_mun = ca100d)
+som_2021 <- som_2021 %>% rename(outdoor_org = mb99a)
+som_2021 <- som_2021 %>% rename(env_org = mb99b)
+som_2021 <- som_2021 %>% rename(cult_soc = mb99d)
+som_2021 <- som_2021 %>% rename(trust_munic = aa10o)
+
+
+
+
+SOM_Final <- som_2021 %>% select(idnr,Region,year,age,wind_invest,
+                                 party_pref,tot_hus_incom,education,sex,
+                                 local_trust,
+                                 outdoor_org,env_org,cult_soc, trust_munic)
+
+SOM_Final2 <- SOM_Final %>% drop_na(wind_invest)
+
+
+wind_vetoes_dta <- wind_vetoes_dta %>% mutate_all(~ifelse(is.na(.), 0, .)) 
+
+wind_vetoes_data <- unique(wind_vetoes_dta)
+
+write.csv(SOM_Final2, file = "C:/Users/johnn/Desktop/R_projects/Thesis/final_dataset.csv", row.names = FALSE)
+
+write.csv(wind_vetoes_data, file = "C:/Users/johnn/Desktop/R_projects/Thesis/final_region_dataset.csv", row.names = FALSE)
+
+#ac10 local trust
+#ca100c satisfaction democracy region
+#ca100d satisfaction democracy municipality
+#mb99a active in outdoor org
+#mb99b active in environmental org
+#mb99d active in cultural society
+#
+
+```
+
+
+```{r}
+#ESS Data 2016
+
+energy_data <- read.csv2('wind_ESS_data_final.csv',fileEncoding = "ISO-8859-1")
+#energy_data <- energy_data %>% select(.,-1)
+
+energy_data <- energy_data %>% mutate(
+  party = as.factor(party),
+  gas = as.factor(gas),
+  hydro = as.factor(hydro),
+  solar = as.factor(solar),
+  wind = as.factor(wind),
+  worried_clim = as.factor(worried_clim),
+  gender = as.factor(gender),
+  education = as.factor(education),
+  income = as.factor(income),
+  region = as.factor(region),
+  imp_safe = as.factor(imp_safe),
+  imp_env = as.factor(imp_env),
+  imp_trad = as.factor(imp_trad)
+  
+)
+
+
+
+
+# Assuming 'all_region_word_freq_df' is your original data frame
+#rf_data <- drop_na(energy_data2)
+
+rf_data2 <- energy_data %>% select(., -idno, -solar, -hydro, -nuclear, -gas)
+
+# Preprocess the data
+
+dummy_matrix <- model.matrix(~. - 1, rf_data2)  # One-hot encode categorical variables
+dummy_outcome_only <- model.matrix(~wind - 1, rf_data2)  #only outcome
+
+
+# Convert matrix to data frame
+dummy_df <- as.data.frame(dummy_matrix)
+dummy_df_wind <- as.data.frame(dummy_outcome_only)
+dummy_outcome_df <- cross_join(dummy_df_wind, rf_data2)
+dummy_outcome_df <- drop_na(dummy_outcome_df)
+dummy_outcome_df <- unique(dummy_outcome_df)
+dummy_outcome_df <- dummy_outcome_df %>% 
+  mutate(wind1 = as_factor(wind1),
+  wind2 = as_factor(wind2),
+  wind3 = as_factor(wind3),
+  wind4 = as_factor(wind4),
+  wind5 = as_factor(wind5))
+
+rf_data <- rf_data2
+rf_data <- unique(rf_data)
+rf_data$wind <- as.factor(rf_data$wind)
+rf_data_ny <- rf_data %>% select(wind,age,party,region,gender,income)
+
+
+rf_data_ny$wind <- ifelse(rf_data_ny$wind == 1, 4,    # very large amount
+                          ifelse(rf_data_ny$wind == 2, 3,    #large
+                          ifelse(rf_data_ny$wind == 3, 2,    #medium
+                          ifelse(rf_data_ny$wind == 4, 1,    #small or none
+                          ifelse(rf_data_ny$wind == 5, 1,    #small or none
+                                 rf_data_ny$wind)))))  
+
+rf_data_ny$wind <- as.factor(rf_data_ny$wind)
+
+rf_data_ny <- drop_na(rf_data_ny)
+
+#balance variables as wind was quite unbalanced under class 4. This improves RF accuracy.
+
+library(performanceEstimation)
+
+balanced_rf_df <- smote(wind ~ ., rf_data_ny, perc.over = 4, k = 6,
+                        perc.under = 5)
+summary(balanced_rf_df)
+summary(rf_data_ny)
+summary(dummy_outcome_df)
+
+```
+
+
+
+Randomness and Representativeness: If your data rows are independent and identically distributed (i.i.d.), splitting based on all columns helps ensure that both the training and test sets are representative of the overall dataset. This is crucial for making sure the model generalizes well to new data.
+
+Target Variable: In some cases, you might want to ensure that the distribution of the target variable (the variable you're trying to predict, e.g., "vetoes" in your case) is similar in both the training and test sets. This is important to avoid biased model evaluation.
+
+In your specific case, splitting based on the "Region" column might be a reasonable choice if you want to ensure that each region is represented in both the training and test sets. However, it depends on the characteristics and goals of your analysis
+
+
+```{r}
+#plot percentage of individuals who voted for each party by their opinion
+#on wind investment, divided by region
+
+rf_data_plot <- rf_data
+
+
+
+rf_data_plot$wind <- ifelse(rf_data_plot$wind == 1, 4,    # very large amount
+                          ifelse(rf_data_plot$wind == 2, 3,    #large
+                          ifelse(rf_data_plot$wind == 3, 2,    #medium
+                          ifelse(rf_data_plot$wind == 4, 1,    #small or none
+                          ifelse(rf_data_plot$wind == 5, 1,    #small or none
+                                 rf_data_plot$wind)))))  
+
+rf_data_plot$wind <- as.factor(rf_data_plot$wind)
+
+rf_data_plot <- drop_na(rf_data_plot)
+
+
+modelsummary::datasummary_skim(rf_data_plot, type = "categorical",
+                               align = "cccc",
+                               title = "SES Summary Statistics",
+                               notes = "Totals and percentages of those who voted for each political party in the last election, views of wind investment (1 is low, 4 is high), how worried one is about climate change, gender, educational level, income bracket, region of sweden one resides in, as well as opinion on whether it is important to live in a safe environment, to care for the environment, and to follow traditions and customs.")
+
+plot_data <- data.frame(party = rf_data_ny$party, wind = rf_data_ny$wind,
+                        region = rf_data_ny$region)
+
+plot_data <- plot_data %>% filter(., !region %in% "blekinge")
+
+
+total_counts <- plot_data %>%
+  group_by(region, party) %>%
+  summarise(total_count = sum(n))
+
+# Merge total counts with plot_data
+plot_data <- left_join(plot_data, total_counts, by = c("region", "party"))
+
+# Calculate percentages based on total count
+plot_data <- plot_data %>%
+  mutate(percent = n / total_count * 100)
+
+# Plot percentages
+ggplot(plot_data, aes(x = party, y = percent, fill = wind)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(x = "Party", y = "Percentage", fill = "Wind Category") +
+  theme_minimal() +
+  facet_wrap(~region, scales = "free")
+```
+
+```{r}
+
+party_2014_2022 <- read.csv2('party_data2.csv')
+party_2014_2022 <- party_2014_2022 %>% select(., -code)
+
+party_veto_data <- read.csv2('veto_data2.csv', fileEncoding = "ISO-8859-1")
+
+party_veto_data <- party_veto_data %>% select(., -pga_veto)
+
+party_veto_comb <- left_join(party_2014_2022,party_veto_data, by = c("municipality","year"))
+
+party_veto_comb <- drop_na(party_veto_comb)
+
+# Plot 
+
+
+library(ggplot2)
+
+# Assuming your dataframe is named df
+summary_dat <- party_veto_comb %>%
+  group_by(party,vetoed) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+
+
+ggplot(summary_dat, aes(x = party, y = count, fill = vetoed)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Party Composition", y = "Count", title = "Count of Vetoes by Municipal governing parties between 2014-2022") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+summary_dat2 <- party_veto_comb %>%
+  group_by(party,vetoed,county) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+
+ggplot(summary_dat2, aes(x = county, y = count, fill = vetoed)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Swedish Municipality", y = "Count of vetoed wind parks", title = "Count of Vetoes by Municipal governing parties by county between 2014-2022") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  facet_wrap(~party)
+
+
+#now shares instead of counts:
+
+
+# Calculate the total count for each party and vetoed combination
+total_counts <- summary_dat2 %>%
+  group_by(party, vetoed) %>%
+  summarise(total_count = sum(count))
+
+# Calculate the share of vetoed (1) to not vetoed (0) for each party and county
+party_vetoed_county_share <- summary_dat2 %>%
+  left_join(total_counts, by = c("party", "vetoed")) %>%
+  mutate(share = count / total_count)
+
+# Plot the share of vetoed (1) to not vetoed (0) for each party and county
+ggplot(party_vetoed_county_share, aes(x = county, y = share, fill = factor(vetoed))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~ party) +
+  labs(title = "Share of Vetoed (1) to Not Vetoed (0) by Party and County",
+       x = "Party",
+       y = "Share") +
+  scale_fill_discrete(name = "Vetoed") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+
+
+
+```{r}
+library(caret)
+library(randomForest)
+library(performanceEstimation)
+
+# Set the seed for reproducibility
+set.seed(123)
+
+tcont5 <- caret::trainControl(method = 'cv', 
+                          number = 10)
+
+set.seed(12345)
+knn_model2 <- caret::train(wind ~ .,
+                            data = rf_data_ny,
+                          preProcess=c("center","scale"),
+                        tuneGrid=expand.grid(k=c(1,2,3,4,5,6,7,8,9,10,15,20,25,50,60,70,80)),
+                            method = "knn",
+                            trControl = tcont5)
+# inspect
+knn_model2
+
+
+# Use cross-validation to determine the best number of trees
+num_trees <- c(5, 10, 15,50, 100, 150)  # You can adjust this range based on your needs
+num_folds <- createFolds(balanced_rf_df$wind, k = 20, list = TRUE)  # Number of folds for cross-validation
+
+
+
+# Function to perform cross-validation and calculate accuracy
+calculate_accuracy <- function(num_trees, data, folds) {
+  accuracy_values <- numeric(length(num_trees))
+  for (i in seq_along(num_trees)) {
+    accuracy_fold <- numeric(length(folds))
+    for (fold in seq_along(folds)) {
+      train_indices <- unlist(folds[-fold])
+      test_indices <- unlist(folds[fold])
+      
+      train_data <- data[train_indices, ]
+      test_data <- data[test_indices, ]
+      
+      rf_model <- randomForest(wind ~ ., data = train_data, importance = TRUE, proximity = TRUE, ntree = num_trees[i])
+      predictions <- predict(rf_model, newdata = test_data)
+      
+      accuracy_fold[fold] <- sum(predictions == test_data$wind) / length(test_data$wind)
+    }
+    accuracy_values[i] <- mean(accuracy_fold)
+  }
+  return(accuracy_values)
+}
+
+# Calculate accuracy for different numbers of trees
+accuracy_values <- calculate_accuracy(num_trees, balanced_rf_df, num_folds)
+
+# Plot the elbow curve
+plot(num_trees, accuracy_values, type = "b", main = "CV for Random Forest Classification", 
+     xlab = "Number of Trees", ylab = "Accuracy")
+
+# Determine the best number of trees (where accuracy is maximized)
+best_num_trees <- num_trees[which.max(accuracy_values)]
+cat("Best number of trees:", best_num_trees, "\n")
+
+
+# Train the random forest model with the best number of trees
+final_rf_model <- randomForest(wind ~ ., data = balanced_rf_df, 
+                               ntree = best_num_trees,
+                               importance = TRUE, proximity = TRUE)
+
+# Extract variable importance from the trained random forest model
+variable_importance <- importance(final_rf_model)
+
+# Sort variables by importance
+sorted_importance <- variable_importance[order(-variable_importance[, 1]), ]
+sorted_importance <- as.data.frame(sorted_importance)
+sorted_importance <- sorted_importance %>% select(1,2,3,4)
+sorted_importance <- rownames_to_column(sorted_importance, var = "vars")
+
+
+sorted_importance
+
+
+"> sorted_importance
+         age       region        party worried_clim 
+       115.5        103.4         63.0         40.4 
+      income    education       gender 
+        32.7         30.0         15.9 "
+
+# Plot the variable importance
+importance_long <- gather(sorted_importance, key = "category", value = "value", -vars)
+
+# Plot
+library(ggplot2)
+ggplot(importance_long, aes(x = vars, y = value, fill = category)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Variable importance for predicting each class of wind opinion",
+       x = "Variable",
+       y = "Importance",
+       fill = "Wind opinion") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+
+# Make predictions on the training data
+train_predictions <- predict(final_rf_model, newdata = balanced_rf_df)
+
+
+final_rf_model
+
+"Call:
+ randomForest(formula = wind ~ ., data = balanced_rf_df, ntree = best_num_trees,      importance = TRUE, proximity = TRUE) 
+               Type of random forest: classification
+                     Number of trees: 150
+No. of variables tried at each split: 2
+
+        OOB estimate of  error rate: 14.4%
+Confusion matrix:
+    1   2    3   4 class.error
+1 504  31   93  62      0.2696
+2  28 491   57  38      0.2003
+3  28  16 1027  57      0.0895
+4  19   9   58 932      0.0845"
+
+
+
+
+
+set.seed(12345)
+tcont <- caret::trainControl(method = 'cv', 
+                          number = 10)
+
+knn_model2 <- caret::train(wind ~ .,
+                            data = rf_data_ny,
+                          preProcess=c("center","scale"),
+                        tuneGrid=expand.grid(k=c(1,2,3,4,5,6,7,8,9,10,15,20,25,50)),
+                            method = "knn",
+                            trControl = tcont)
+
+knn_model2 # k = 5 (0.792%)
+
+knn_model2$results$Accuracy
+
+ggplot(knn_model2$results,aes(x=k,y=Accuracy)) + geom_line()
+
+
+```
+
+
+
+
+```{r}
+
+library(pdp)
+library(randomForest)
+
+
+# Separate predictors (features) and target variable
+predictors <- rf_data_ny[, -which(names(rf_data_ny) == "wind")]
+target <- rf_data_ny$wind
+
+
+# Set up cross-validation
+ctrl <- trainControl(method = "cv",    # Cross-validation method
+                     number = 10)      # Number of folds
+
+
+# Train the Random Forest model using cross-validation
+rf_model_ny <- train(predictors, target,
+                  method = "rf",      # Random Forest method
+                  trControl = ctrl)  # Cross-validation settings
+
+
+
+
+
+# Create a partial dependency plot for the variable "variable_name"
+
+
+
+age_pdp1 <- partial(final_rf_model, pred.var = c("age","region"), data = balanced_rf_df,
+        plot = TRUE, chull = TRUE,
+        progress = TRUE, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, smooth = TRUE, 
+        plot.engine = "ggplot2")
+
+age_pdp2 <- partial(final_rf_model, pred.var = c("age","region"), data = balanced_rf_df,
+        plot = TRUE, chull = TRUE,
+        progress = TRUE, type = "classification", prob = TRUE,
+        which.class = 2, trim.outliers = TRUE, smooth = TRUE, 
+        plot.engine = "ggplot2")
+
+age_pdp3 <- partial(final_rf_model, pred.var = c("age","region"), data = balanced_rf_df,
+        plot = TRUE, chull = TRUE,
+        progress = TRUE, type = "classification", prob = TRUE,
+        which.class = 3, trim.outliers = TRUE, smooth = TRUE, 
+        plot.engine = "ggplot2")
+
+age_pdp4 <- partial(final_rf_model, pred.var = c("age","region"), data = balanced_rf_df,
+        plot = TRUE, chull = TRUE,
+        progress = TRUE, type = "classification", prob = TRUE,
+        which.class = 4, trim.outliers = TRUE, smooth = TRUE, 
+        plot.engine = "ggplot2")
+
+
+
+ggplot(data = age_df, aes(x = age, y = yhat, colour = region)) +
+  geom_point() +
+  labs(x = "Political Party voted for in last election", 
+       y = "Amount of electricity that should be generated by wind", 
+       title = "Partial Dependency Plot on the probability of wanting more or less wind powered electricity by region and party choice",
+       caption = "explain what is shown") +
+  facet_wrap(~region)
+
+
+
+
+party_pdp <- partial(final_rf_model, pred.var = "party", data = balanced_rf_df,
+        plot = TRUE, chull = TRUE,
+        progress = TRUE, type = "classification", prob = TRUE)
+party_pdp
+
+region_pdp <- partial(final_rf_model, pred.var = "region", data = balanced_rf_df,
+        plot = TRUE, chull = TRUE,
+        progress = TRUE, type = "classification", prob = TRUE)
+region_pdp
+
+region_party_pdp <- partial(final_rf_model, pred.var = c("party","region"), data = balanced_rf_df,
+        plot = TRUE, chull = TRUE, progress = TRUE, 
+        rug = TRUE, plot.engine = "ggplot2")
+region_party_pdp
+
+income_pdp <- partial(final_rf_model, pred.var = "income", data = balanced_rf_df,
+        plot = TRUE, chull = TRUE, progress = TRUE, 
+        rug = TRUE, plot.engine = "ggplot2")
+income_pdp
+
+education_pdp <- partial(final_rf_model, pred.var = "education", data = balanced_rf_df,
+        plot = TRUE, chull = TRUE, progress = TRUE, 
+        rug = TRUE, plot.engine = "ggplot2")
+education_pdp
+
+worried_clim_pdp <- partial(final_rf_model, pred.var = "worried_clim", data = balanced_rf_df,
+        plot = TRUE, chull = TRUE, progress = TRUE, 
+        rug = TRUE, plot.engine = "ggplot2")
+worried_clim_pdp
+
+
+region_party_pdp1 <- partial(final_rf_model, pred.var = c("party","region"), data = balanced_rf_df, type = "classification", prob = TRUE,
+        which.class = 1, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2")
+
+
+region_party_pdp4 <- partial(final_rf_model, pred.var = c("party","region"), data = balanced_rf_df, type = "classification", prob = TRUE,
+        which.class = 4, trim.outliers = TRUE, plot = TRUE,smooth = TRUE, 
+        plot.engine = "ggplot2") +
+  aes(fill = party, colour = party) +
+  labs(x = "Political Party voted for in last election", 
+       y = "Amount of electricity that should be generated by wind", 
+       title = "Partial Dependency Plot on the probability of wanting more wind powered electricity by region and party choice",
+       caption = "explain what is shown")
+
+
+
+
+```
+
+
+
+```{r}
+# Generate partial dependence plots for class 1 and class 4 for party and region
+
+region_party_pdp1_ny <- partial(final_rf_model, pred.var = c("party","region"), data = balanced_rf_df, 
+                             type = "classification", prob = TRUE, which.class = 1, trim.outliers = TRUE,
+                             plot = FALSE, smooth = TRUE, plot.engine = "ggplot2")
+
+region_party_pdp4_ny <- partial(final_rf_model, pred.var = c("party","region"), data = balanced_rf_df, 
+                             type = "classification", prob = TRUE, which.class = 4, trim.outliers = TRUE,
+                             plot = FALSE, smooth = TRUE, plot.engine = "ggplot2")
+
+# Extract the data from the partial dependence plots
+data1 <- region_party_pdp1_ny
+data1 <- data1 %>% mutate(class = 1)
+data4 <- region_party_pdp4_ny
+data4 <- data4 %>% mutate(class = 4)
+
+# Combine the data
+combined_data <- rbind(data1, data4)
+
+# Plot the combined data
+combined_plot <- ggplot(combined_data, aes(x = party, y = yhat, color = factor(class))) +
+  geom_point(class) +
+  labs(x = "Party", y = "Predicted Probability") +
+  theme_minimal() +
+  facet_wrap(~region, scales = "free") # Customize colors if needed
+```
+
+
+
+
+
+
+
+
+
+```{r}
+library(ggplot2)
+
+# Make predictions using the Random Forest model
+rf_predictions <- predict(rf_final_model, newdata = rf_data2, type = "prob")
+
+# Filter data for the predictor variable you want to visualize
+predictor_variable <- "party"
+predictions_with_data_subset <- predictions_with_data[, c("wind", predictor_variable, paste0(1:5))]
+
+# Reshape data for plotting
+predictions_long <- reshape2::melt(predictions_with_data_subset, 
+                                   id.vars = c(predictor_variable, "wind"),
+                                   variable.name = "Class", 
+                                   value.name = "Probability")
+
+# Plot predicted probabilities
+ggplot(predictions_long, aes(x = .data[[predictor_variable]], y = Probability, color = Class)) +
+  geom_line(size = 3) +
+  labs(x = "Party", y = "Predicted Probability", color = "Wind") +
+  theme_minimal()
+
+# Plot predicted probabilities with separate lines for each class
+ggplot(predictions_long, aes(x = .data[[predictor_variable]], y = Probability, color = Class, group = Class)) +
+  geom_line(size = 1.5) +
+  labs(x = "Party", y = "Predicted Probability", color = "Class") +
+  theme_minimal() +
+  facet_wrap(~party, scales = "free")
+
+
+
+
+```
+
+
+
+
+
+
+
+```{r}
+# Install and load the 'tm' package if not already installed
+if (!require("tm")) install.packages("tm", dependencies=TRUE)
+library(tm)
+library(tokenizers)
+library(SnowballC)
+
+# Example sentence
+text <- readLines("Halland_ny.txt")
+
+# Remove lines starting with "Läs hela artikeln på"
+filtered_lines <- grep("^Läs hela artikeln på", text, invert = TRUE, value = TRUE)
+
+filtered_lines <- grep("^Alla artiklar är skyddade av upphovsrättslagen. Artiklar får ej distribueras utanför den egna organisationen utan godkännande från Retriever eller den enskilde", text, invert = TRUE, value = TRUE)
+
+filtered_lines <- grep("^retriever", text, invert = TRUE, value = TRUE)
+
+filtered_lines <- grep("^bonnier", text, invert = TRUE, value = TRUE)
+
+
+filtered_lines <- grep("^Bildtext", text, invert = TRUE, value = TRUE)
+
+filtered_lines <- grep("^=", text, invert = TRUE, value = TRUE)
+
+text <- gsub("\\n", "", text)
+text <- gsub("\\s+", " ", text)
+text <- iconv(text, to = "UTF-8", sub = " ")
+text <- gsub("\\\\n", "\n", text)
+text <- gsub("[^[:alnum:][:space:]åäöÅÄÖ]", "", text)
+
+
+
+# Combine the remaining lines back into a single text
+filtered_text <- paste(filtered_lines, collapse = "\n")
+
+
+# Convert the text to a Corpus
+corpus <- Corpus(VectorSource(filtered_text))
+
+# Preprocess the text (lowercase and remove punctuation)
+
+corpus <- tm_map(corpus, removePunctuation)
+corpus <- tm_map(corpus, stripWhitespace)
+corpus <- tm_map(corpus, removeNumbers)
+corpus <- tm_map(corpus, content_transformer(tolower))
+
+# Remove Swedish stop words
+#corpus <- tm_map(corpus, removeWords, stopwords("swedish"))
+sv_stop <- tm::stopwords("swedish")
+
+# Remove connecting words
+connecting_words <- c("och", "men", "eller", "i", "en", "ett", "att",
+                      "med", "av", "på", "det", "den","har", "är", "som", "allt",
+                      "mycket", "där", "när", "var", "hur", "vad", "sedan", "nu", "även",
+                      "än", "vid", "genom", "över", "under", "melan", "bakom", "framför",
+                      "utan, före", "efter", "inom", "utom", "sedan", "menar", "om",
+                      "då, därifrån", "dit", "härifrån","då","oss","jag","ju","får",
+                      "ska","du","vi","oss","ni","er", "till", "också","ta","se","eftersom", "bild", "då", "fick", "fått", "gick", "nog", "bildtext", "artiklar", "kommer", "säger", "finns", "upphovsrättslagen", 
+                      "tidningar", "artikeln", "retriever", "sverige",
+                      "or","folkbladet","artikelförfattaren", "enligt", 
+                      "går", "få", "får", "fick", "läs", "ser", "säga")
+
+sv_stop_wds <- union(sv_stop, connecting_words)
+
+corpus <- tm_map(corpus, removeWords, words = sv_stop_wds)
+
+corpus <- tm_map(corpus, stemDocument)
+
+
+
+
+# Inspect the result
+cleaned_text <- sapply(corpus, function(x) as.character(x))
+#print(cleaned_text)
+
+
+# Specify the file path where you want to save the cleaned text
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/halland_clean.txt"
+
+# Write the cleaned text to the file
+writeLines(cleaned_text, file_path)
+
+# Print a message indicating that the file has been saved
+cat("Cleaned text has been saved to:", file_path, "\n")
+
+final_clean <- readLines("halland_clean.txt")
+
+#clean_combined <- readLines("combined_data.txt")
+
+```
+
+```{r}
+# Tokenize into words
+words <- unlist(tokenize_words(final_clean))
+
+```
+
+
+
+```{r}
+#prep for PCA
+
+library(tm)
+library(stringr)
+library(tokenizers)
+library(SnowballC)
+
+
+# Remove Swedish stop words
+#corpus <- tm_map(corpus, removeWords, stopwords("swedish"))
+sv_stop <- tm::stopwords("swedish")
+
+# Remove connecting words
+connecting_words <- c("och", "men", "eller", "i", "en", "ett", "att",
+                      "med", "av", "på", "det", "den","har", "är", "som", "allt",
+                      "mycket", "där", "när", "var", "hur", "vad", "sedan", "nu", "även",
+                      "än", "vid", "genom", "över", "under", "melan", "bakom", "framför",
+                      "utan, före", "efter", "inom", "utom", "sedan", "menar", "om",
+                      "då, därifrån", "dit", "härifrån","då","oss","jag","ju","får",
+                      "ska","du","vi","oss","ni","er", "till", "också","ta","se","eftersom", "bild", "då", "fick", "fått", "gick", "nog", "bildtext", "artiklar", "kommer", "säger", "finns", "upphovsrättslagen", 
+                      "tidningar", "artikeln", "retriever", "sverige",
+                      "or","folkbladet","artikelförfattaren", "enligt", 
+                      "går", "få", "får", "fick", "läs", "ser", "säga","vill",
+                      "bygga","procent", "hela", "el", "år", "enskild", "kärnkraft","bygg", "samtidigt", "retriev", "utgivaren", "skriver", "hela", "andra","bara", "del", "helt", "databasen", "retrieverinfocombralla","ny",
+                      "insändare","nya","län","kunna","beslut","twh","mw",
+                      "heller", "länet","enskilde","barometern","gör",
+                      "redan","all","dag","ny","tidning","svenska","svensk",
+                      "planera","nyhet", "västmanland", "östergötland", "örebro", "västra_götaland", "västernorrland", 
+             "västerbotten", "värmland", "södermanland", "stockholm", "skåne", 
+             "norrbotten", "kronoberg", "kalmar", "jönköping", "jämtland", "gävleborg", 
+             "gotland", "dalarna", "halland","norrköp","västra","götaland","mer",
+             "havsbaserad", "kommun","kommunen","region","regionen","kommuner","in",
+             "kommunerna","nerikes","allehanda","organisationen","holmen","sverig",
+             "ångermanland","tidningen","sundsvalls","sollefteå","västerbottenskuriren","vattenfall","energimyndigheten","länsstyrelsen","värmlands","wermlandstidningen","södermansland","katrineholmskuriren","retrieverinfocom","skånes","elproduktion","regeringen","trelleborgs","norrländska","landbaserad","norrbottenskuriren","ljungby", "kronobergs","ölandsbladet","kalmarsund","småland","västervikstidningen",
+             "oskarshamnstidningen","jönköpings","sveriges","östersundsposten",
+             "länstidningen","söderhamn","gävleborgs","gävle","gefle","dagblad",
+             "ljusdalsposten","söderhamnskuriren","sverig","finn","ljusdal",
+             "tidn","hedemora","ripfjället","malungsälen","falu","kuriren","regeringen", "hav","hallandsposten","falkenberg","organisationen")
+
+sv_stop_wds <- union(sv_stop, connecting_words)
+sv_stop_wds <- setdiff(sv_stop_wds, "inte")
+
+
+östergötland_C <- readLines("östergötland_clean.txt")
+örebro_C <- readLines("örebro_clean.txt")
+västra_götaland_C <- readLines("västra_götaland_clean.txt")
+västmanland_C <- readLines("västmanland_clean.txt")
+västernorrland_C <- readLines("västernorrland_clean.txt")
+Västerbotten_C <- readLines("västerbotten_clean.txt")
+värmland_C <- readLines("värmland_clean.txt")
+södermansland_C <- readLines("södermansland_clean.txt")
+stockholm_C <- readLines("stockholm_clean.txt")
+skåne_C <- readLines("skåne_clean.txt")
+norrbotten_C <- readLines("norrbotten_clean.txt")
+kronoberg_C <- readLines("kronoberg_clean.txt")
+kalmar_C <- readLines("kalmars_län_clean.txt")
+jönköping_C <- readLines("jönköpings_län_clean.txt")
+jämtland_C <- readLines("jämtland_clean.txt")
+gävleborg_C <- readLines("gävleborg_clean.txt")
+gotland_C <- readLines("gotland_clean.txt")
+dalarna_C <- readLines("dalarna_clean.txt")
+halland_C <- readLines("halland_clean.txt")
+
+
+# Convert the text to a Corpus
+corpusss1 <- Corpus(VectorSource(östergötland_C))
+corpusss2 <- Corpus(VectorSource(örebro_C))
+corpusss3 <- Corpus(VectorSource(västra_götaland_C))
+corpusss4 <- Corpus(VectorSource(västmanland_C))
+corpusss5 <- Corpus(VectorSource(västernorrland_C))
+corpusss6 <- Corpus(VectorSource(Västerbotten_C))
+corpusss7 <- Corpus(VectorSource(värmland_C))
+corpusss8 <- Corpus(VectorSource(södermansland_C))
+corpusss9 <- Corpus(VectorSource(stockholm_C))
+corpusss10 <- Corpus(VectorSource(skåne_C))
+corpusss11 <- Corpus(VectorSource(norrbotten_C))
+corpusss12 <- Corpus(VectorSource(kronoberg_C))
+corpusss13 <- Corpus(VectorSource(kalmar_C))
+corpusss14 <- Corpus(VectorSource(jönköping_C))
+corpusss15 <- Corpus(VectorSource(jämtland_C))
+corpusss16 <- Corpus(VectorSource(gävleborg_C))
+corpusss17 <- Corpus(VectorSource(gotland_C))
+corpusss18 <- Corpus(VectorSource(dalarna_C))
+corpusss19 <- Corpus(VectorSource(halland_C))
+
+corpusss1<- tm_map(corpusss1, content_transformer(removeWords), words = sv_stop_wds)
+corpusss2<- tm_map(corpusss2, content_transformer(removeWords), words = sv_stop_wds)
+corpusss3<- tm_map(corpusss3, content_transformer(removeWords), words = sv_stop_wds)
+corpusss4<- tm_map(corpusss4, content_transformer(removeWords), words = sv_stop_wds)
+corpusss5<- tm_map(corpusss5, content_transformer(removeWords), words = sv_stop_wds)
+corpusss6<- tm_map(corpusss6, content_transformer(removeWords), words = sv_stop_wds)
+corpusss7<- tm_map(corpusss7, content_transformer(removeWords), words = sv_stop_wds)
+corpusss8<- tm_map(corpusss8, content_transformer(removeWords), words = sv_stop_wds)
+corpusss9<- tm_map(corpusss9, content_transformer(removeWords), words = sv_stop_wds)
+corpusss10<- tm_map(corpusss10, content_transformer(removeWords), words = sv_stop_wds)
+corpusss11<- tm_map(corpusss11, content_transformer(removeWords), words = sv_stop_wds)
+corpusss12<- tm_map(corpusss12, content_transformer(removeWords), words = sv_stop_wds)
+corpusss13<- tm_map(corpusss13, content_transformer(removeWords), words = sv_stop_wds)
+corpusss14<- tm_map(corpusss14, content_transformer(removeWords), words = sv_stop_wds)
+corpusss15<- tm_map(corpusss15, content_transformer(removeWords), words = sv_stop_wds)
+corpusss16<- tm_map(corpusss16, content_transformer(removeWords), words = sv_stop_wds)
+corpusss17<- tm_map(corpusss17, content_transformer(removeWords), words = sv_stop_wds)
+corpusss18<- tm_map(corpusss18, content_transformer(removeWords), words = sv_stop_wds)
+corpusss19<- tm_map(corpusss19, content_transformer(removeWords), words = sv_stop_wds)
+
+
+# Tokenize into words
+östergötland <- unlist(tokenize_words(corpusss1))
+örebro <- unlist(tokenize_words(corpusss2))
+västra_götaland <- unlist(tokenize_words(corpusss3))
+västmanland <- unlist(tokenize_words(corpusss4))
+västernorrland <- unlist(tokenize_words(corpusss5))
+västerbotten <- unlist(tokenize_words(corpusss6))
+värmland <- unlist(tokenize_words(corpusss7))
+södermanland <- unlist(tokenize_words(corpusss8))
+stockholm <- unlist(tokenize_words(corpusss9))
+skåne <- unlist(tokenize_words(corpusss10))
+norrbotten <- unlist(tokenize_words(corpusss11))
+kronoberg <- unlist(tokenize_words(corpusss12))
+kalmar <- unlist(tokenize_words(corpusss13))
+jönköping <- unlist(tokenize_words(corpusss14))
+jämtland <- unlist(tokenize_words(corpusss15))
+gävleborg <- unlist(tokenize_words(corpusss16))
+gotland <- unlist(tokenize_words(corpusss17))
+dalarna <- unlist(tokenize_words(corpusss18))
+halland <- unlist(tokenize_words(corpusss19))
+
+
+# Tokenize into n-grams
+östergötland_ngram <- unlist(tokenize_ngrams(corpusss1, n = 2))
+örebro_ngram <- unlist(tokenize_ngrams(corpusss2, n = 2))
+västra_götaland_ngram <- unlist(tokenize_ngrams(corpusss3, n = 2))
+västmanland_ngram <- unlist(tokenize_ngrams(corpusss4, n = 2))
+västernorrland_ngram <- unlist(tokenize_ngrams(corpusss5, n = 2))
+västerbotten_ngram <- unlist(tokenize_ngrams(corpusss6, n = 2))
+värmland_ngram <- unlist(tokenize_ngrams(corpusss7, n = 2))
+södermanland_ngram <- unlist(tokenize_ngrams(corpusss8, n = 2))
+stockholm_ngram <- unlist(tokenize_ngrams(corpusss9, n = 2))
+skåne_ngram <- unlist(tokenize_ngrams(corpusss10, n = 2))
+norrbotten_ngram <- unlist(tokenize_ngrams(corpusss11, n = 2))
+kronoberg_ngram <- unlist(tokenize_ngrams(corpusss12, n = 2))
+kalmar_ngram <- unlist(tokenize_ngrams(corpusss13, n = 2))
+jönköping_ngram <- unlist(tokenize_ngrams(corpusss14, n = 2))
+jämtland_ngram <- unlist(tokenize_ngrams(corpusss15, n = 2))
+gävleborg_ngram <- unlist(tokenize_ngrams(corpusss16, n = 2))
+gotland_ngram <- unlist(tokenize_ngrams(corpusss17, n = 2))
+dalarna_ngram <- unlist(tokenize_ngrams(corpusss18, n = 2))
+halland_ngram <- unlist(tokenize_ngrams(corpusss19, n = 2))
+
+
+# Specify the file path where you want to save the cleaned text
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/östergötland.txt"
+writeLines(östergötland, file_path)
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/örebro.txt"
+writeLines(örebro, file_path)
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/västra_götaland.txt"
+writeLines(västra_götaland, file_path)
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/västmanland.txt"
+writeLines(västmanland, file_path)
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/västernorrland.txt"
+writeLines(västernorrland, file_path)
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/västerbotten.txt"
+writeLines(västerbotten, file_path)
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/värmland.txt"
+writeLines(värmland, file_path)
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/södermanland.txt"
+writeLines(södermansland, file_path)
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/stockholm.txt"
+writeLines(stockholm, file_path)
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/skåne.txt"
+writeLines(skåne, file_path)
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/norrbotten.txt"
+writeLines(norrbotten, file_path)
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/kronoberg.txt"
+writeLines(kronoberg, file_path)
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/kalmar.txt"
+writeLines(kalmar, file_path)
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/jönköping.txt"
+writeLines(jönköping, file_path)
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/jämtland.txt"
+writeLines(jämtland, file_path)
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/gävleborg.txt"
+writeLines(gävleborg, file_path)
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/gotland.txt"
+writeLines(gotland, file_path)
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/dalarna.txt"
+writeLines(dalarna, file_path)
+file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/halland.txt"
+writeLines(halland, file_path)
+
+
+
+
+
+```
+
+
+```{r}
+
+# Specify the file path where you want to save the cleaned text
+#file_path <- "C:/Users/johnn/Desktop/R_projects/Thesis/dalarna.txt"
+
+# Write the cleaned text to the file
+#writeLines(dalarna, file_path)
+
+östergötland <- readLines("östergötland.txt")
+örebro <- readLines("örebro.txt")
+västra_götaland <- readLines("västra_götaland.txt")
+västmanland <- readLines("västmanland.txt")
+västernorrland <- readLines("västernorrland.txt")
+västerbotten <- readLines("västerbotten.txt")
+värmland <- readLines("värmland.txt")
+södermanland <- readLines("södermanland.txt")
+stockholm <- readLines("stockholm.txt")
+skåne <- readLines("skåne.txt")
+norrbotten <- readLines("norrbotten.txt")
+kronoberg <- readLines("kronoberg.txt")
+kalmar <- readLines("kalmar.txt")
+jönköping <- readLines("jönköping.txt")
+jämtland <- readLines("jämtland.txt")
+gävleborg <- readLines("gävleborg.txt")
+gotland <- readLines("gotland.txt")
+dalarna <- readLines("dalarna.txt")
+halland <- readLines("halland.txt")
+```
+
+
+
+
+```{r}
+#create and combine dataframes
+# List of region files
+regions <- c("västmanland", "östergötland", "örebro", "västra_götaland", "västernorrland", 
+             "västerbotten", "värmland", "södermanland", "stockholm", "skåne", 
+             "norrbotten", "kronoberg", "kalmar", "jönköping", "jämtland", "gävleborg", 
+             "gotland", "dalarna", "halland")
+
+# Initialize an empty list to store data frames for each region
+region_word_freq_list <- list()
+
+# Loop through each region
+for (region in regions) {
+  # Read the lines from the region file
+  region_text <- readLines(paste0(region, ".txt"))
+  
+  # Find positions of the word "wind"
+  wind_positions <- which(region_text == "vindkraft")
+  
+  # Define the window size (e.g., 10 words on each side)
+  window_size <- 5
+  
+  # Function to extract surrounding words within the window
+  get_surrounding_words <- function(position) {
+    start <- max(1, position - window_size)
+    end <- min(length(region_text), position + window_size)
+    surrounding_words <- region_text[start:end]
+    surrounding_words
+  }
+  
+  # Extract surrounding words for each occurrence of "wind"
+  surrounding_words_list <- lapply(wind_positions, get_surrounding_words)
+  
+  # Combine the lists into a single vector of surrounding words
+  surrounding_words <- unlist(surrounding_words_list)
+  
+  # Calculate word frequencies for the surrounding words
+  surrounding_word_freq <- table(surrounding_words)
+  
+  # Get the top 100 surrounding words
+  top_words <- head(sort(surrounding_word_freq, decreasing = TRUE), 100)
+  # Create a data frame for the region
+  region_word_freq_df <- data.frame(
+    Word = names(top_words),
+    Frequency = as.numeric(top_words),
+    Region = factor(region)
+  )
+  
+  # Append the data frame to the list
+  region_word_freq_list[[region]] <- region_word_freq_df
+}
+
+
+# Combine all region data frames into a single data frame
+all_region_word_freq_df <- do.call(rbind, region_word_freq_list)
+
+# View the combined data frame
+head(all_region_word_freq_df, 10)
+
+```
+
+
+```{r}
+
+#ja and nejs
+
+
+library(stringr)
+
+
+# Initialize a data frame to store the results
+region_counts <- data.frame(Region = regions, Ja_Count = numeric(length(regions)), Nej_Count = numeric(length(regions)))
+
+# Loop through each region
+for (i in seq_along(regions)) {
+  region <- regions[i]
+  region_text <- readLines(paste0(region, ".txt"))  # Read the lines from the region file
+  
+  # Count occurrences of "ja" and "nej" in the region text
+  ja_count <- sum(str_count(tolower(region_text), "\\bja\\b"))
+  nej_count <- sum(str_count(tolower(region_text), "\\bnej\\b"))
+  
+  # Update the data frame with counts
+  region_counts[i, "Ja_Count"] <- ja_count
+  region_counts[i, "Nej_Count"] <- nej_count
+}
+
+# View the resulting data frame
+print(region_counts)
+
+
+
+
+# Initialize a data frame to store the results
+region_counts2 <- data.frame(Region = regions, Positiva_count = numeric(length(regions)), Negativa_count = numeric(length(regions)))
+
+# Loop through each region
+for (i in seq_along(regions)) {
+  region <- regions[i]
+  region_text <- readLines(paste0(region, ".txt"))  # Read the lines from the region file
+  
+  # Count occurrences of "ja" and "nej" in the region text
+  Positiva_count <- sum(str_count(tolower(region_text), "\\bpositiva\\b"))
+  Negativa_count <- sum(str_count(tolower(region_text), "\\bnegativa\\b"))
+  
+  # Update the data frame with counts
+  region_counts2[i, "Positiva_count"] <- Positiva_count
+  region_counts2[i, "Negativa_count"] <- Negativa_count
+}
+
+# View the resulting data frame
+print(region_counts2)
+
+comb_sentiment <- left_join(region_counts, region_counts2, by = "Region")
+
+# Reshape the data
+comb_sentiment_long <- gather(comb_sentiment, Sentiment, Count, -Region)
+
+# Plot using ggplot (counts)
+ggplot(comb_sentiment_long, aes(x = Region, y = Count, fill = Sentiment)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Sentiment Analysis by Region",
+       x = "Region",
+       y = "Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+# Calculate percentages
+ja_nej_percentages <- comb_sentiment_long %>%
+  filter(Sentiment %in% c("Ja_Count", "Nej_Count")) %>%
+  group_by(Region) %>%
+  mutate(Percentage = Count / sum(Count) * 100)
+
+# Calculate percentages for Positiva_count vs Negativa_count
+positiva_negativa_percentages <- comb_sentiment_long %>%
+  filter(Sentiment %in% c("Positiva_count", "Negativa_count")) %>%
+  group_by(Region) %>%
+  mutate(Percentage = Count / sum(Count) * 100)
+
+# Combine the two datasets
+combined_percentages <- rbind(ja_nej_percentages, positiva_negativa_percentages)
+
+# Plot using ggplot
+ggplot(combined_percentages, aes(x = factor(Sentiment, levels = c("Ja_Count", "Nej_Count", "Positiva_count", "Negativa_count")), y = Percentage, fill = Sentiment)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Newspaper Sentiment by County",
+       x = "Sentiment",
+       y = "Percentage") +
+  facet_wrap(~Region) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+```{r}
+#combine all dataframes
+
+#aggregated data
+
+agg_dta <- pivoted_df %>% select(Region,vetoes,pop_dens,Centre,Lib,KD,Green,Mod,
+                                 SocDem,SD,Left)
+
+agg_dta2 <- left_join(comb_sentiment,agg_dta, by = "Region")
+
+
+#granular individual level data
+
+
+
+
+
+
+
+
+
+
+final_comb <- left_join(SOM_Final2,wind_vetoes_dta, by = c("Region","year"))
+
+final_comb <- final_comb %>% select(., -tot_works,-tot_auth,-tot_no_auth,
+                                    -Project_name,-Municipality,-tot_vetoed,
+                                    -vetoed2)
+
+final_comb <- final_comb[complete.cases(final_comb$wind_invest), ]
+
+final_comb <- final_comb %>% filter(Region != "blekinge")
+
+final_comb$wind_invest <- factor(final_comb$wind_invest, levels = c(0, 1), labels = c("0", "1"))
+
+final_comb$Region <- factor(final_comb$Region, levels = c(
+      "stockholm", "uppsala", "södermanland", "östergötland", "jönköping",
+      "kronoberg", "kalmar", "gotland", "blekinge", "skåne", "halland",
+      "västra_götaland", "värmland", "örebro", "västmanland", "dalarna",
+      "gävleborg", "västernorrland", "jämtland", "västerbotten", "norrbotten", "missing"
+    ))
+
+
+```
+
+
+
+
+```{r}
+#ngram freq
+
+
+#ngram freq
+
+regions_ngram <- c("västmanland_ngram", "östergötland_ngram", "örebro_ngram", "västra_götaland_ngram", "västernorrland_ngram", 
+                   "västerbotten_ngram", "värmland_ngram", "södermanland_ngram", "stockholm_ngram", "skåne_ngram", 
+                   "norrbotten_ngram", "kronoberg_ngram", "kalmar_ngram", "jönköping_ngram", "jämtland_ngram", "gävleborg_ngram", 
+                   "gotland_ngram", "dalarna_ngram", "halland_ngram")
+
+# Initialize an empty list to store data frames for each region
+region_word_freq_list_ngram <- list()
+
+# Loop through each region
+for (region in regions_ngram) {
+  # Load the character string directly (assuming it's already loaded as an R object)
+  region_text <- get(region)
+  
+  # Find positions of the word "vindkraft"
+  wind_positions <- grep("vindkraft", region_text)
+  
+  # Define the window size (e.g., 10 words on each side)
+  window_size <- 2
+  
+  # Function to extract surrounding words within the window
+  get_surrounding_words <- function(position) {
+    start <- max(1, position - window_size)
+    end <- min(length(region_text), position + window_size)
+    surrounding_words <- region_text[start:end]
+    surrounding_words
+  }
+  
+  # Extract surrounding words for each occurrence of "vindkraft"
+  surrounding_words_list <- lapply(wind_positions, get_surrounding_words)
+  
+  # Combine the lists into a single vector of surrounding words
+  surrounding_words <- unlist(surrounding_words_list)
+  
+  # Calculate word frequencies for the surrounding words
+  surrounding_word_freq <- table(surrounding_words)
+  
+  # Get the top 100 surrounding words
+  top_words <- head(sort(surrounding_word_freq, decreasing = TRUE), 100)
+  
+  # Create a data frame for the region
+  region_word_freq_df <- data.frame(
+    Word = names(top_words),
+    Frequency = as.numeric(top_words),
+    Region = factor(region)
+  )
+  
+  # Append the data frame to the list
+  region_word_freq_list_ngram[[region]] <- region_word_freq_df
+}
+
+# Combine all region data frames into a single data frame
+all_region_word_freq_df_ngram <- do.call(rbind, region_word_freq_list_ngram)
+
+# View the combined data frame
+head(all_region_word_freq_df_ngram, 10)
+
+```
+
+
+
+
+
+```{r}
+
+
+#add veto to df
+
+all_region_word_freq_df$vetoes <- 
+  ifelse(all_region_word_freq_df$Region == "östergötland", 0.33,
+         ifelse(all_region_word_freq_df$Region == "örebro", 0.64,
+                ifelse(all_region_word_freq_df$Region == "västra_götaland", 0.29, 
+                       ifelse(all_region_word_freq_df$Region == "västmanland", 0.0,
+                              ifelse(all_region_word_freq_df$Region == "västernorrland", 0.24,
+                                     ifelse(all_region_word_freq_df$Region == "västerbotten", 0.21,
+                                            ifelse(all_region_word_freq_df$Region == "värmland", 0.35,
+                                                   ifelse(all_region_word_freq_df$Region == "södermanland", 0.64,
+                                                          ifelse(all_region_word_freq_df$Region == "stockholm", 0.0,
+                                                                 ifelse(all_region_word_freq_df$Region == "skåne", 0.0,
+                                                                        ifelse(all_region_word_freq_df$Region == "norrbotten", 0.3,
+                                                                               ifelse(all_region_word_freq_df$Region == "kronoberg", 0.34,
+                                                                                      ifelse(all_region_word_freq_df$Region == "kalmar", 0.29,
+                                                                                             ifelse(all_region_word_freq_df$Region == "jönköping", 0.28,
+                                                                                                           ifelse(all_region_word_freq_df$Region == "gävleborg",0.13,
+                                                                                                                  ifelse(all_region_word_freq_df$Region == "gotland",0.0,
+                                                                                                                         ifelse(all_region_word_freq_df$Region == "halland",0.33,
+                                                                                                                                ifelse(all_region_word_freq_df$Region == "jämtland", 0.31, 
+                                                                                                                                       ifelse(all_region_word_freq_df$Region == "dalarna",0.18,NA)))))))))))))))))))
+
+
+
+# add pop density to df
+
+all_region_word_freq_df$pop_dens <- ifelse(all_region_word_freq_df$Region == "stockholm", 377,
+                                           ifelse(all_region_word_freq_df$Region == "södermanland", 49,
+                                                  ifelse(all_region_word_freq_df$Region == "östergötland", 45,
+                                                         ifelse(all_region_word_freq_df$Region == "jönköping", 35,
+                                                                ifelse(all_region_word_freq_df$Region == "kronoberg", 24,
+                                                                       ifelse(all_region_word_freq_df$Region == "kalmar", 22,
+                                                                              ifelse(all_region_word_freq_df$Region == "gotland", 20,
+                                                                                     ifelse(all_region_word_freq_df$Region == "skåne", 130,
+                                                                                            ifelse(all_region_word_freq_df$Region == "halland", 63,
+                                                                                                   ifelse(all_region_word_freq_df$Region == "västra_götaland", 74,
+                                                                                                          ifelse(all_region_word_freq_df$Region == "örebro", 36,
+                                                                                                                 ifelse(all_region_word_freq_df$Region == "västmanland", 55,
+                                                                                                                        ifelse(all_region_word_freq_df$Region == "dalarna", 10,
+                                                                                                                               ifelse(all_region_word_freq_df$Region == "gävleborg", 16,
+                                                                                                                                      ifelse(all_region_word_freq_df$Region == "västernorrland", 11,
+                                                                                                                                             ifelse(all_region_word_freq_df$Region == "jämtland", 3,
+                                                                                                                                                    ifelse(all_region_word_freq_df$Region == "västerbotten", 5,
+                                                                                                                                                           ifelse(all_region_word_freq_df$Region == "norrbotten", 3, 
+                                                                                                                                                                  ifelse(all_region_word_freq_df$Region == "värmland", 16,NA)))))))))))))))))))
+
+
+
+
+# add political parties:
+parties <- read.csv2("party_2014_2022.csv", skip = 1, fileEncoding = "ISO-8859-1")
+
+# Perform the left join
+joined_data <- left_join(all_region_word_freq_df, parties, by = "Region")
+
+all_region_word_freq_df <- joined_data
+
+
+
+
+
+```
+
+
+
+```{r}
+#make sure variables are of correct class
+
+all_region_word_freq_df <- all_region_word_freq_df %>% 
+  mutate(Region = as.factor(Region),
+         Word = as.character(Word),
+         Centre = as.numeric(Centre),
+         Lib = as.numeric(Lib),
+         KD = as.numeric(KD),
+         Green = as.numeric(Green),
+         Mod = as.numeric(Mod),
+         SocDem = as.numeric(SocDem),
+         SD = as.numeric(SD),
+         Left = as.numeric(Left)) %>% 
+  rename(Word_Freq = Frequency) 
+
+# Remove the "row names" column
+row.names(all_region_word_freq_df) <- NULL
+
+all_region_word_freq_df <- all_region_word_freq_df %>%
+  filter(Word != "vindkraft")
+
+
+
+
+
+pivoted_df <- pivot_wider(all_region_word_freq_df, 
+                          names_from = Word, 
+                          values_from = Word_Freq,
+                          values_fill = 0)
+
+# View the pivoted dataset
+head(pivoted_df)
+
+
+
+pivoted_df2 <- pivot_longer(
+  all_region_word_freq_df,
+  cols = -c(Region,vetoes,Word_Freq,Word,pop_dens),  # Exclude the 'Region' column from pivoting
+  names_to = "Party",
+  values_to = "Party_Perc"
+)
+```
+
+
+
+
+```{r}
+
+library(FactoMineR)
+library(plotly)
+
+# Extract relevant columns for PCA
+pca_data <- energy_data2 %>%
+  select(.,-idno)
+
+# Perform PCA
+pca_result <- PCA(pca_data[, -1], scale.unit = TRUE, ncp = 5)
+
+# Create a plotly scatter plot for the first two principal components
+plot_ly(data = as.data.frame(pca_result$ind$coord),
+        x = ~Dim.1, y = ~Dim.2,
+        text = ~row.names(pca_result$ind$coord),
+        color = rep(all_region_word_freq_df$Region, each = nrow(pca_result$ind$coord)),
+        mode = "markers") %>%
+  layout(title = "PCA of Word Frequencies",
+         xaxis = list(title = "Principal Component 1"),
+         yaxis = list(title = "Principal Component 2"))
+
+
+
+
+library(FactoMineR)
+library(explor)
+library(ordr)
+library(ordr.extra)
+library(ca)
+library(dichromat)
+library(RColorBrewer)
+library(ggrepel)
+library(ExPanDaR)
+
+
+
+
+# Do a PCA 
+# Select only the numerical columns for PCA
+numerical_features <- pivoted_df[, c(2:561)]
+
+# Run PCA
+pca_result <- prcomp(numerical_features, scale. = TRUE)
+
+# Print PCA results
+print(summary(pca_result))
+
+# Plot the scree plot
+screeplot(pca_result)
+
+# Extract proportion of variance explained
+prop_var <- (pca_result$sdev^2) / sum(pca_result$sdev^2)
+
+# Plot proportion of variance explained
+prop_var_df <- data.frame(PC = seq_along(prop_var), Prop_Var = prop_var)
+
+prop_var_df %>%
+  ggplot(aes(x = PC, y = Prop_Var)) +
+  geom_col() +
+  labs(x = "Principal Component", y = "Proportion of Variance Explained") +
+  ggtitle("Scree Plot for PCA")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+library(plotly)
+
+library(stats)
+
+
+
+prin_comp <- prcomp(numerical_features)
+
+explained_variance_ratio <- summary(prin_comp)[["importance"]]['Proportion of Variance',]
+
+explained_variance_ratio <- 100 * explained_variance_ratio
+
+components <- prin_comp[["x"]]
+
+components <- data.frame(components)
+
+components <- cbind(components, categorical_feature$Region)
+
+components$PC3 <- -components$PC3
+
+components$PC2 <- -components$PC2
+
+
+axis = list(showline=FALSE,
+
+            zeroline=FALSE,
+
+            gridcolor='#ffff',
+
+            ticklen=4,
+
+            titlefont=list(size=13))
+
+
+fig <- components %>%
+
+  plot_ly()  %>%
+
+  add_trace(
+
+    type = 'splom',
+
+    dimensions = list(
+
+      list(label=paste('PC 1 (',toString(round(explained_variance_ratio[1],1)),'%)',sep = ''), values=~PC1),
+
+      list(label=paste('PC 2 (',toString(round(explained_variance_ratio[2],1)),'%)',sep = ''), values=~PC2),
+
+      list(label=paste('PC 3 (',toString(round(explained_variance_ratio[3],1)),'%)',sep = ''), values=~PC3),
+
+      list(label=paste('PC 4 (',toString(round(explained_variance_ratio[4],1)),'%)',sep = ''), values=~PC4)
+
+    ),
+
+    color = ~all_region_word_freq_df$Region, colors = c('#636EFA','#EF553B','#00CC96')
+
+  ) %>%
+
+  style(diagonal = list(visible = FALSE)) %>%
+
+  layout(
+
+    legend=list(title=list(text='color')),
+
+    hovermode='closest',
+
+    dragmode= 'select',
+
+    plot_bgcolor='rgba(240,240,240, 0.95)',
+
+    xaxis=list(domain=NULL, showline=F, zeroline=F, gridcolor='#ffff', ticklen=4),
+
+    yaxis=list(domain=NULL, showline=F, zeroline=F, gridcolor='#ffff', ticklen=4),
+
+    xaxis2=axis,
+
+    xaxis3=axis,
+
+    xaxis4=axis,
+
+    yaxis2=axis,
+
+    yaxis3=axis,
+
+    yaxis4=axis
+
+  )
+
+
+fig
+
+
+
+
+
+
+
+
+
+
+
+
+
+library(plotly)
+
+library(stats)
+
+
+
+
+
+prin_comp <- prcomp(numerical_features, rank = 2)
+
+components <- prin_comp[["x"]]
+
+components <- data.frame(components)
+
+components <- cbind(components, pivoted_df$Region)
+
+components$PC2 <- -components$PC2
+
+explained_variance <- summary(prin_comp)[["sdev"]]
+
+explained_variance <- explained_variance[1:2]
+
+comp <- prin_comp[["rotation"]]
+
+comp[,'PC2'] <- - comp[,'PC2']
+
+loadings <- comp
+
+for (i in seq(explained_variance)){
+
+  loadings[,i] <- comp[,i] * explained_variance[i]
+
+}
+
+
+features = c('vetoes')
+
+
+fig <- plot_ly(components, x = ~PC1, y = ~PC2, color = ~pivoted_df$Region, colors = c('#636EFA','#EF553B','#00CC96'), type = 'scatter', mode = 'markers') %>%
+
+  layout(
+
+    legend=list(title=list(text='color')),
+
+    plot_bgcolor = "#e5ecf6",
+
+    xaxis = list(
+
+      title = "0"),
+
+    yaxis = list(
+
+      title = "1"))
+
+for (i in seq(4)){
+
+  fig <- fig %>%
+
+    add_segments(x = 0, xend = loadings[i, 1], y = 0, yend = loadings[i, 2], line = list(color = 'black'),inherit = FALSE, showlegend = FALSE) %>%
+
+    add_annotations(x=loadings[i, 1], y=loadings[i, 2], ax = 0, ay = 0,text = features[i], xanchor = 'center', yanchor= 'bottom')
+
+}
+
+
+fig
+
+
+```
+
+
+##########################################################################
+
+
+```{r}
+
+library(wordcloud)
+library(RColorBrewer)
+
+# Convert the surrounding word frequencies to a data frame
+surrounding_word_freq_df <- as.data.frame(surrounding_word_freq)
+
+# Rename the columns for better plotting
+colnames(surrounding_word_freq_df) <- c("word", "frequency")
+
+# Set a custom color palette for the word cloud
+custom_colors <- brewer.pal(9, "Set1")
+
+# Create a word cloud with additional customization
+wordcloud(words = surrounding_word_freq_df$word,
+          freq = surrounding_word_freq_df$frequency,
+          scale = c(5, 1),       # Adjust the scale as needed
+          min.freq = 5,            # Minimum frequency to include a word
+          colors = custom_colors[1:length(surrounding_word_freq_df$word)],  # Match the length of colors to words
+          random.order = FALSE,    # Keep the order of words
+          rot.per = 0.35,          # Fraction of words with rotation
+          main = "Östergötland Word Cloud for 'Wind'",  # Main title
+          random.color = TRUE,     # Use random colors for words
+          max.words = 100,         # Maximum number of words to display
+          ordered.colors = TRUE)   # Use the colors in the order given
+```
+
+
+
+
+
+
+
+
+
+```{r}
+# Install and load the required package
+# install.packages("rpart")
+library(rpart)
+library(rpart.plot)
+library(caret)
+
+
+
+# Split the data into training and testing sets
+
+train_index <- sample(1:nrow(rf_data2), 0.8 * nrow(rf_data2))
+train_data <- rf_data2[train_index, ]
+test_data <- rf_data2[-train_index, ]
+
+# Build the decision tree model
+tree_model <- rpart(wind ~ ., data = train_data, method = "class")
+
+
+
+# Make predictions on the test set
+predictions <- predict(tree_model, test_data, type = "class")
+
+# Evaluate the model
+conf_matrix <- table(predictions, test_data$wind)
+accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
+
+print(paste("Accuracy:", round(accuracy, 4)))
+print("Confusion Matrix:")
+print(conf_matrix)
+
+# Plot the decision tree with variable names
+rpart.plot(tree_model)
+
+
+
+
+tcontrol <- caret::trainControl(method = 'cv', 
+                          number = 10)
+
+rpart_model <- caret::train(wind ~ .,
+                            data = rf_data2,
+                            tuneGrid=expand.grid(cp=c(0,0.01,0.025,0.05,0.10,0.25,0.5,1.0)),
+                            control = rpart.control(minbucket=10,
+                                                    minsplit = 5), #here adding extra controls. values in each leaf 
+                            method = "rpart",
+                            trControl = tcontrol)
+rpart_model
+# cp = 0.010  0.937
+
+
+
+ggplot(rpart_model$results,aes(x=cp,y=Accuracy)) + geom_line()
+
+
+# We can extract the "best model" using $finalModel (the cp parameter having the lowest error)
+best_decision_tree <- rpart_model$finalModel
+best_decision_tree
+
+  
+
+# And we can plot its tree structure using rpart.plot
+rpart.plot(best_decision_tree,
+           type = 4, extra = 101, under = TRUE, cex = 1, box.palette = "auto")
+
+
+
+```
+
+
+
+```{r}
+library(nnet)
+library(broom)
+
+#multinomial logistic regression
+
+multinom_dta <- energy_data2 %>% select(.,-idno,imp_safe,imp_env,imp_trad,
+                                        worried_clim)
+
+model_multinom <- multinom(wind ~ hydro + gas + nuclear + solar +
+                             gender + age + education +
+                             income + party, data = multinom_dta)
+
+summary(model_multinom)
+
+
+
+
+
+# Tidy up the results
+tidy_results <- tidy(model_multinom)
+
+# Plot coefficients
+ggplot(tidy_results, aes(x = term, y = estimate, color = factor(term))) +
+  geom_point(position = position_dodge(width = 0.5)) +
+  geom_errorbar(aes(ymin = estimate - 1.96 * std.error, ymax = estimate + 1.96 * std.error),
+                position = position_dodge(width = 0.5), width = 0.25, size = 1) +
+  labs(title = "Multinomial Logistic Regression Coefficients",
+       x = "Predictors",
+       y = "Coefficient Estimate") +
+  theme_minimal()
+
+
+
+
+```
+
+
+
+```{r}
+#k-prototypes clustering 
+
+
+library(clustMixType)
+
+# Extract the numerical features
+numerical_features <- all_region_word_freq_df[, !(names(all_region_word_freq_df) %in% c("Region","Word"))]
+numerical <- scale(numerical_features)
+
+
+# Extract the categorical feature
+categorical_feature <- all_region_word_freq_df[, c("Region","Word")] # Replace with "Word" if needed
+
+# Combine numerical and categorical features into a single matrix
+data_matrix <- cbind(numerical, categorical_feature)
+
+
+
+
+
+# Assuming 'data_matrix' is your combined numerical and categorical data
+# Try different numbers of clusters (adjust the range as needed)
+num_clusters <- 2:18
+
+# Initialize an empty vector to store within-cluster sum of squares
+within_ss <- numeric(length(num_clusters))
+
+# Perform k-prototypes clustering for each number of clusters
+for (k in num_clusters) {
+  kproto_result <- kproto(data_matrix, k)
+  within_ss[k - 1] <- kproto_result$tot.withinss
+}
+
+# Plot the elbow curve
+plot(num_clusters, within_ss, type = 'b', main = 'Elbow Method for k-prototypes Clustering', xlab = 'Number of Clusters', ylab = 'Within-Cluster Sum of Squares')
+
+
+
+
+
+# Assuming 'num_clusters' is the number of clusters you want
+num_clusters <- 9
+
+# Perform k-prototypes clustering
+kproto_result <- kproto(data_matrix, num_clusters)
+
+
+# Add cluster assignments to the dataframe
+
+long_clust_df <- all_region_word_freq_df
+
+long_clust_df$Cluster <- as.factor(kproto_result$cluster)
+
+
+# Plotly scatter plot
+plot_ly(data = long_clust_df, 
+        x = ~Word_Freq, 
+        y = ~vetoes, 
+        color = ~Cluster,
+        type = 'scattergl',
+        mode = 'markers',
+        marker = list(size = 5),
+         text = ~paste("Word: ", Word, "<br>Region: ", Region,
+                      "<br>Centre: ", Centre, "<br>Lib: ", Lib,
+                      "<br>KD: ", KD, "<br>Green: ", Green,
+                      "<br>Mod: ", Mod, "<br>SocDem: ", SocDem,
+                      "<br>SD: ", SD, "<br>Left: ", Left)
+        ) %>%
+  layout(title = 'Clusters of Data Points') %>% 
+   add_markers(colors = ~Cluster, colorscale = 'Viridis', opacity = 0.7)
+
+```
+
+
+
+```{r}
+#multivariate linear regression
+
+library(car)
+library(broom)
+
+# Assuming 'rf_data' is your data frame
+MLR_mod <- lm(Party ~ pop_dens + vetoes + Region, data = pivoted_df2)
+
+# Print the summary of the regression model
+summary(MLR_mod)
+
+
+
+```
+
+
+
+
+```{r}
+#k-means
+
+# Assuming 'combined_data' is your dataframe
+scaled_data <- scale(numerical_features)
+
+
+# Check for missing or infinite values in the data_matrix
+if (any(is.na(scaled_data)) | any(!is.finite(scaled_data))) {
+  stop("Data contains missing or infinite values. Please handle or impute missing values before clustering.")
+}
+
+# Initialize WSS vector
+wss <- numeric(10)
+
+# Run k-means for different numbers of clusters
+for (i in 1:10) {
+  kmeans_model <- kmeans(scaled_data, centers = i)
+  wss[i] <- sum(kmeans_model$withinss)
+}
+
+# Plot the elbow curve
+plot(1:10, wss, type = "b", main = "Elbow Method for Cluster Analysis", xlab = "Number of Clusters", ylab = "Within Sum of Squares")
+
+kmeans_mod <- kmeans(scaled_data, centers = 4)
+
+
+
+
+# Create a scatter plot with ggplot2
+ggplot(cluster_df, aes(x = Region, y = vetoes, color = Cluster)) +
+  geom_point(size = 3) +
+  labs(title = 'K-means Clustering of Data Points',
+       x = 'Frequency',
+       y = 'Vetoes') +
+  theme_minimal() +
+  scale_color_manual(values = viridis::viridis_pal()(10))
+
+
+
+
+
+# Add cluster assignments to your original data frame
+all_region_word_freq_df$Cluster <- as.factor(kmeans_mod$cluster)
+
+# Create a scatter plot with Plotly
+plot_ly(data = all_region_word_freq_df, 
+        x = ~Frequency, 
+        y = ~vetoes, 
+        color = ~Cluster,
+        type = 'scattergl',
+        mode = 'markers',
+        marker = list(size = 5),
+        text = ~paste("Word: ", Word, "<br>Region: ", Region)
+) %>%
+  layout(title = 'K-means Clustering of Data Points') %>%
+  add_markers(colors = ~Cluster, colorscale = 'Viridis', opacity = 0.7)
+```
+
+
+
+
+
+
+
+
+```{r}
+
+##########     n-grams    ##################
+
+
+library(ngram)
+
+unlist(tokenize_ngrams(corpusss1, n = 3))
+
+# Calculate bigram frequencies
+bigram_freq <- table(östergötland_C)
+
+# Select the top N frequent bigrams
+sorted_bigrams <- sort(bigram_freq, decreasing = TRUE)
+
+# Extract the top 100 bigrams and their frequencies
+selected_bigrams <- names(sorted_bigrams)[1:100]
+selected_frequencies <- sorted_bigrams[1:100]
+
+# Tokenize bigrams into a list
+tokenized_bigrams <- strsplit(selected_bigrams, " ")
+
+# Create a vocabulary
+vocabulary <- unique(unlist(tokenized_bigrams))
+
+# Create a sparse matrix with rows as documents and columns as bigrams
+bigrams_matrix <- Matrix(0, nrow = length(selected_bigrams), ncol = length(vocabulary), sparse = TRUE)
+
+# Set column names to bigram names
+colnames(bigrams_matrix) <- vocabulary
+
+# Fill in the matrix with one-hot encoding
+for (i in seq_along(tokenized_bigrams)) {
+  bigrams_matrix[i, tokenized_bigrams[[i]]] <- 1
+}
+
+# Now you can use filtered_bigram_matrix for PCA
+
+
+
+# Perform PCA on bigrams_matrix
+pca_result <- prcomp(bigrams_matrix, center = TRUE, scale. = TRUE)
+
+# Access the principal components
+pca_components <- pca_result$x
+
+# Access the standard deviations of the principal components
+pca_sd <- pca_result$sdev
+
+# Access the proportion of variance explained by each principal component
+pca_variance <- pca_sd^2 / sum(pca_sd^2)
+
+# Access the cumulative proportion of variance explained
+cumulative_variance <- cumsum(pca_variance)
+
+# Plot the cumulative proportion of variance explained
+plot(cumulative_variance, type = "b", xlab = "Number of Principal Components", ylab = "Cumulative Proportion of Variance Explained")
+
+
+library(plotly)
+
+
+# Perform PCA
+pca_result <- prcomp(bigrams_matrix, scale. = TRUE)
+
+# Extract the principal components
+pca_components <- pca_result$x[, 1:2]
+
+# Get n-gram labels
+ngram_labels <- colnames(bigrams_matrix)
+
+# Subset n-gram labels to match the number of rows in pca_components
+ngram_labels <- ngram_labels[1:nrow(pca_components)]
+
+# Create a data frame for plotting
+plot_data <- data.frame(PC1 = pca_components[, 1], PC2 = pca_components[, 2], Ngram = ngram_labels)
+
+# Create a scatter plot with plotly
+plot_ly(
+  data = plot_data,
+  x = ~PC1,
+  y = ~PC2,
+  text = ~Ngram,
+  mode = "markers",
+  type = "scatter",
+  marker = list(size = 10)
+) %>%
+  layout(
+    xaxis = list(title = "PC1"),
+    yaxis = list(title = "PC2"),
+    title = "PCA of N-grams",
+    showlegend = TRUE
+  )
+
+
+
+```
+
+
+```{r}
+##########     words    ##################
+
+
+library(ngram)
+
+
+# Calculate bigram frequencies
+word_freq <- table(östergötland)
+
+# Select the top N frequent bigrams
+sorted_words <- sort(word_freq, decreasing = TRUE)
+
+# Extract the top 100 bigrams and their frequencies
+top_words <- names(sorted_words)[1:100]
+top_frequencies <- sorted_words[1:100]
+
+# Tokenize bigrams into a list
+tokenized_words <- strsplit(top_words, " ")
+
+# Create a vocabulary
+word_vocabulary <- unique(unlist(tokenized_words))
+
+# Create a sparse matrix with rows as documents and columns as bigrams
+word_matrix <- Matrix(0, nrow = length(top_words), ncol = length(word_vocabulary), sparse = TRUE)
+
+# Set column names to bigram names
+colnames(word_matrix) <- word_vocabulary
+
+# Fill in the matrix with one-hot encoding
+for (i in seq_along(tokenized_words)) {
+  word_matrix[i, tokenized_words[[i]]] <- 1
+}
+
+# Now you can use filtered_bigram_matrix for PCA
+
+
+
+# Perform PCA on bigrams_matrix
+pca_result2 <- prcomp(word_matrix, center = TRUE, scale. = TRUE)
+
+# Access the principal components
+pca_components2 <- pca_result2$x
+
+# Access the standard deviations of the principal components
+pca_sd2 <- pca_result2$sdev
+
+# Access the proportion of variance explained by each principal component
+pca_variance2 <- pca_sd2^2 / sum(pca_sd2^2)
+
+# Access the cumulative proportion of variance explained
+cumulative_variance2 <- cumsum(pca_variance2)
+
+# Plot the cumulative proportion of variance explained
+plot(cumulative_variance2, type = "b", xlab = "Number of Principal Components", ylab = "Cumulative Proportion of Variance Explained")
+
+
+library(plotly)
+
+
+# Perform PCA
+pca_result2 <- prcomp(word_matrix, scale. = TRUE)
+
+# Extract the principal components
+pca_components2 <- pca_result2$x[, 1:40]
+
+# Get n-gram labels
+word_labels <- colnames(word_matrix)
+
+# Subset n-gram labels to match the number of rows in pca_components
+word_labels <- word_labels[1:nrow(pca_components2)]
+
+# Create a data frame for plotting
+plot_data2 <- data.frame(PC1 = pca_components2[, 1], PC2 = pca_components2[, 2], Words = word_labels)
+
+# Create a scatter plot with plotly
+plot_ly(
+  data = plot_data2,
+  x = ~PC1,
+  y = ~PC2,
+  text = ~Words,
+  mode = "markers",
+  type = "scatter",
+  marker = list(size = 10)
+) %>%
+  layout(
+    xaxis = list(title = "PC1"),
+    yaxis = list(title = "PC2"),
+    title = "PCA of N-grams",
+    showlegend = TRUE
+  )
+
+```
+
+
+
+
+```{r}
+#lda topics
+library(sjmisc)
+
+library(topicmodels)
+
+library(tm)
+
+# Tokenize into bigrams
+östergötland_ngram <- unlist(tokenize_ngrams(corpusss1, n = 3))
+
+
+# Sample 10 random values from the population
+sampled_values <- sample(östergötland, size = 1000)
+
+# Create a corpus from your sampled text
+sample_corp <- Corpus(VectorSource(as.character(sampled_values)))
+
+# Create a document-term matrix
+dtm <- DocumentTermMatrix(sample_corp)
+
+# Convert the DTM to a matrix
+dtm_matrix <- as.matrix(dtm)
+
+# Remove rows with all zero entries
+dtm_matrix_filtered <- dtm_matrix[rowSums(dtm_matrix) > 0, ]
+
+# Convert the filtered matrix back to DTM
+dtm_filtered <- DocumentTermMatrix(data.frame(dtm_matrix_filtered))
+
+# Check if there are still rows left after filtering
+if (nrow(dtm_filtered) > 0) {
+  # Assuming 'dtm_filtered' is your Document-Term Matrix
+  lda_model <- LDA(dtm_filtered, k = 5)  # Set 'k' to the desired number of topics
+  
+  # Rest of the LDA analysis...
+  topics <- topics(lda_model)
+  terms <- terms(lda_model)
+  
+  top_terms <- terms(lda_model, 5)  # Set the number of top terms to display
+  print(top_terms)
+} else {
+  print("No documents with non-zero entries.")
+}
+
+# Assuming 'dtm' is your Document-Term Matrix
+lda_model <- LDA(dtm_filtered, k = 10)  # Set 'k' to the desired number of topics
+
+topics <- topics(lda_model)
+terms <- terms(lda_model)
+
+top_terms <- terms(lda_model, 10)  # Set the number of top terms to display
+print(top_terms)
+
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+#split data into training and test sets
+
+
+# Set a seed for reproducibility
+set.seed(123)
+
+# Create an index for the training set (80% of the data)
+training_index <- sample(1:length(words), 0.8 * length(words))
+
+# Use the index to split the data into training and test sets
+training_set <- words[training_index]
+test_set <- words[-training_index]
+
+# Now 'training_data' contains 80% of your data, and 'test_data' contains the remaining 20%.
+
+# Step 4: Continue with Word2Vec model training using the 'training_data'
+
+
+```
+
+
+
+
+```{r}
+agg_dta2 %>% 
+  ggplot(aes(x = , y = wind_invest, fill = party_pref)) +
+  
+  # add half-violin from {ggdist} package
+  stat_halfeye(
+    # adjust bandwidth
+    adjust = 0.8,
+    # move to the right
+    justification = -0.2,
+    .width = 0,
+    point_colour = NA
+  ) +
+  geom_boxplot(
+    width = 0.12,
+    # removing outliers
+    outlier.color = "turquoise",
+    alpha = 0.5
+  ) +
+  stat_dots(
+    # ploting on left side
+    side = "left",
+    # adjusting position
+    justification = 1.1,
+    # adjust grouping (binning) of observations
+    binwidth = 0.02
+  ) +
+  # Themes and Labels
+  theme_tq() +
+  scale_fill_colorblind() +
+  labs(
+    title = "Time Spent on Intellectual Pursuits by Socio-Economic Status",
+    x = " ",
+    y = "Time Spent (hours per day)",
+    caption = "The above raincloud plot combines the utility of a boxplot, 
+    a density plot, and a dot-plot. 
+    A comparison of time spent on intellectual pursuits by social economic 
+    status is highlighted",
+    fill = "Intellectual Pursuit"
+  ) +
+  coord_flip() +
+  facet_wrap(~Region) 
+
+
+
+```
+
+
+
+
+
+
+
+```{r}
+veto_data %>% group_by(county) %>% 
+  summarise(across(everything()))
+
+
+library(dplyr)
+
+merged_dataset <- inner_join(som_2021, veto_data, by = c("var1", "var2"))
+
+
+#mb99f = local heritage 2016 only
+
+SOM_data %>% select()
+
+SOM_data %>%
+  group_by(year) %>%
+  summarise(across(everything(), ~sum(!is.na(ha200b)))) %>% 
+  print(n = 50) 
+
+SOM_data %>% filter(year %in% c("2021")) %>% 
+  count(is.na(kommun))
+
+som_2021 %>% count(is.na(mb))
+
+
+modelsummary::datasummary_skim(som_2021)
+
+dim(som_2021)
+
+threshold <- 0.5  # 10% threshold (keep rows less than 50% missing values)
+som_2021_ny <- som_2021[rowSums(is.na(som_2021))/ncol(som_2021) <= threshold, ]
+
+
+```
+
+```{r}
+ggplot(data = som_2021_ny, aes(x = Time_Spent, y = Gini, colour = SES)) +
+  geom_point(position = position_jitter(width = 0.2), alpha = 0.5) +
+  geom_smooth(method = "glm", se = FALSE) +
+  labs(x = "Time Spent", 
+       y = "Gini (inequality)", 
+       title = "Relationship between time spent on religious activities vs schooling and research on Gini by SES",
+       caption = "The above plot shows the linear relationships between how 
+       much time is spent on either religious practice or schooling and 
+       research on gini coefficients by social economic status. Higher gini 
+       equates to higher inequality, lower equates to lower inequality or higher equality") +
+  facet_wrap(~Intellectual_Pursuit) + 
+  scale_fill_distiller(palette = "Spectral")
+```
+
+
+
+
+
+```{r}
+ggplot(data = som_2021_ny, aes(x = Time_Spent, y = Gini, colour = SES)) +
+  geom_point(position = position_jitter(width = 0.2), alpha = 0.5) +
+  geom_smooth(method = "glm", se = FALSE) +
+  labs(x = "Time Spent", 
+       y = "Gini (inequality)", 
+       title = "Relationship between time spent on religious activities vs schooling and research on Gini by SES",
+       caption = "The above plot shows the linear relationships between how 
+       much time is spent on either religious practice or schooling and 
+       research on gini coefficients by social economic status. Higher gini 
+       equates to higher inequality, lower equates to lower inequality or higher equality") +
+  facet_wrap(~Intellectual_Pursuit) + 
+  scale_fill_distiller(palette = "Spectral")
+```
+
+
+
+##############################################################################
+
+
+
+
+```{r}
+library(word2vec)
+
+
+# Train Word2Vec model
+model <- word2vec(x = words, dim = 100, #number of features/dimensions
+                        window = 10, #context window size
+                  iter = 2,
+                  type = "skip-gram",
+                  min_count = 10)
+
+
+
+
+nn <- predict(model, c("åsikt"), type = "nearest", top_n = 50)
+nn
+
+
+emb <- as.matrix(model)
+vector <- emb["vind", ] + emb["åsikt", ] 
+predict(model, vector, type = "nearest", top_n = 50)
+
+
+
+```
+
+```{r}
+# # Load your large pretrained word2vec model
+#pretrained_model <- read.wordvectors("C:/Users/johnn/Desktop/thesis_data/swe_pretrained_model.bin", type = "bin")
+
+
+
+# Load your small corpus
+small_corpus <- readLines("combined_data.txt")
+
+# Train your word2vec model on the small corpus
+model_comb <- word2vec(x = words, dim = 300, 
+                  window = 5, negative_samples = 5, iter = 10,
+                  init_model = pretrained_model)
+
+# Save the fine-tuned model
+write.wordvectors(model, "path/to/fine_tuned_model.bin")
+
+pretrained_mod <- read.word2vec("C:/Users/johnn/Desktop/thesis_data/swe_pretrained_model.bin", normalize = FALSE)
+
+
+nn2 <- predict(pretrained_mod, c("vindkraft"), type = "nearest", top_n = 50)
+nn2
+
+
+emb2 <- as.matrix(pretrained_mod)
+vector2 <- emb2["vindkraftverk", ] + emb2["åsikt", ]  
+predict(pretrained_mod, vector2, type = "nearest", top_n = 50)
+
+```
+
+
+
+
+```{r}
+library(text2vec)
+# Train GloVe model
+# Use our filtered vocabulary
+# Use our filtered vocabulary
+
+# Create iterator over tokens
+tokenss <- space_tokenizer(cleaned_text)
+# Create vocabulary. Terms will be unigrams (simple words).
+it = itoken(tokenss, progressbar = FALSE)
+vocabz <- create_vocabulary(it)
+vocabz <- prune_vocabulary(vocabz, term_count_min = 5L)
+
+vectorizer <- vocab_vectorizer(vocabz)
+# use window of 5 for context words
+tcm <- create_tcm(it, vectorizer, skip_grams_window = 10L)
+
+glove <- GlobalVectors$new(rank = 50, x_max = 5)
+wv_main <- glove$fit_transform(tcm, n_iter = 10, convergence_tol = 0.01, n_threads = 8)
+
+wv_context <- glove$components
+word_vectors <- wv_main + t(wv_context)
+
+östergötland <- word_vectors["vind", , drop = FALSE] +
+  word_vectors["åsikt", , drop = FALSE]
+  
+cos_sim = sim2(x = word_vectors, y = östergötland, method = "cosine", norm = "l2")
+head(sort(cos_sim[,1], decreasing = TRUE), 30)
+
+
+
+
+```
+
+
+```{r}
+
+library(uwot)
+library(ggrepel)
+viz <- umap(emb, n_neighbors = 15, n_threads = 2, n_components = 2)
+
+dframe  <- data.frame(word = gsub("//.+", "", rownames(emb)), 
+                  xpos = gsub(".+//", "", rownames(emb)), 
+                  x = viz[, 1], y = viz[, 2], 
+                  stringsAsFactors = FALSE)
+
+#dframe  <- subset(dframe, xpos %in% c("vind"))
+
+
+library(plotly)
+plot_ly(dframe, x = ~x, y = ~y, type = "scatter", mode = 'text', text = ~word)
+
+
+# Perform PCA
+
+dframe_pca  <- dframe[, c(3, 4)]
+
+df_pca_standardized <- scale(dframe)
+pca_result <- prcomp(dframe, center = TRUE, scale. = TRUE)
+
+```
+
+
+
+
+
+
+```{r}
+######################################## plotly
+
+library(Rtsne)
+
+rtsne_result <- Rtsne(emb)
+plot(rtsne_result)
+
+similarity_matrix <- crossprod(emb)
+
+tsne_df <- data.frame(
+  x = rtsne_result$Y[, 1],
+  y = rtsne_result$Y[, 2],
+  label = colnames(similarity_matrix)
+)
+
+#check if dimensions match
+
+if (dim(rtsne_result$Y)[1] == dim(similarity_matrix)[1]) {
+  tsne_df <- data.frame(
+    x = rtsne_result$Y[, 1],
+    y = rtsne_result$Y[, 2],
+    label = colnames(similarity_matrix)
+  )
+} else {
+  print("Dimensions do not match. Check your data.")
+}
+
+# Assuming you have already trained your Word2Vec model (model)
+# Extract word vectors from the model
+word_vectors <- as.matrix(model)
+
+
+# Calculate pairwise cosine similarity
+similarity_matrix <- crossprod(word_vectors)
+
+# Assuming 'vindkraftverk' and 'värmland' are in your vocabulary
+vector <- word_vectors["vindkraftverk", ] + word_vectors["värmland", ]
+
+# Apply t-SNE for dimensionality reduction using Rtsne
+library(Rtsne)
+tsne_result <- Rtsne(as.dist(1 - similarity_matrix), check_duplicates = FALSE)
+
+
+# Create a data frame for the t-SNE result
+tsne_df <- data.frame(
+  x = tsne_result$Y[, 1],
+  y = tsne_result$Y[, 2],
+  label = colnames(similarity_matrix)
+)
+
+# Assuming 'vindkraftverk' and 'värmland' are in your vocabulary
+vector <- word_vectors[c("vindkraftverk", "värmland"), ]
+
+# Add the specific word vector to the data frame
+vector_df <- data.frame(
+  x = Rtsne::Rtsne(matrix(vector, ncol = length(vector)), perplexity = 0.1, check_duplicates = FALSE)$Y[, 1],
+  y = Rtsne::Rtsne(matrix(vector, ncol = length(vector)), perplexity = 0.1, check_duplicates = FALSE)$Y[, 2],
+  label = c("vindkraftverk", "värmland")
+)
+
+# Combine t-SNE and specific word vector data frames
+combined_df <- rbind(tsne_df, vector_df)
+
+# Create an interactive plot with plotly
+library(plotly)
+
+plot_ly(data = combined_df, x = ~x, y = ~y, text = ~label, color = ~label, type = "scatter", mode = "markers") %>%
+  layout(title = "t-SNE Visualization of Word2Vec Embeddings",
+         xaxis = list(title = "t-SNE Component 1"),
+         yaxis = list(title = "t-SNE Component 2"))
+
+
+#####################################################
+```
+
+
+```{r}
+library(tsne)
+
+# Calculate pairwise cosine similarity
+similarity_matrix <- crossprod(emb)
+
+
+# Apply t-SNE for dimensionality reduction
+tsne_result <- tsne::tsne(as.dist(1 - similarity_matrix))
+
+# Visualize the t-SNE result
+plot(tsne_result, col = 'blue', pch = 20, main = 't-SNE Visualization of Word2Vec Embeddings')
+
+text(tsne_result, labels = rownames(tsne_result$points), col = 'red', cex = 0.8)
+
+
+
+# Perform t-SNE for dimensionality reduction
+tsne_result <- tsne(for_tsne)
+
+# Create a data frame with word labels and their corresponding t-SNE coordinates
+tsne_df <- data.frame(word = rownames(emb), x = tsne_result$Y[, 1], y = tsne_result$Y[, 2])
+
+# Plot the t-SNE results
+ggplot(tsne_df, aes(x, y, label = word)) +
+  geom_point() +
+  geom_text_repel(box.padding = 0.5, force = 1, segment.size = 0.5) +  # Use geom_text_repel for labeled points
+  theme_minimal() +
+  ggtitle("t-SNE Visualization of Word Embeddings")
+
+
+```
+
+
+
+```{r}
+library(word2vec)
+
+set.seed(1234)
+
+# Train Word2Vec model
+model2 <- word2vec(x = words, dim = 100, #number of features/dimensions
+                        window = 15, #context window size
+                  iter = 20, 
+                  type = "cbow",
+                  min_count = 50)
+
+
+nn2 <- predict(model2, c("verk"), type = "nearest", top_n = 30)
+nn2
+
+
+emb2 <- as.matrix(model2)
+vector2 <- emb2["vind", ] + emb2["skåne", ]
+predict(model2, vector2, type = "nearest", top_n = 30)
+
+```
+
+
+```{r}
+###################################################################
+#test start
+
+
+
+# stemming 
+stem_tokenizer <-  function(x, language = "swedish") {
+  tokens = tokenizers::tokenize_words(x)
+  lapply(tokens, SnowballC::wordStem, language=language)
+}
+
+load_stopwords <- function(.language) {
+  stopwords <- tm::stopwords(.language)
+  if (.language == "swedish") {
+    stopwords <- c(stopwords, 
+                   "och", "men", "eller", "i", "en", "ett", "att",
+                      "med", "av", "på", "det", "den","har", "är", "som", "allt",
+                      "mycket", "där", "när", "var", "hur", "vad", "sedan", "nu", "även",
+                      "än", "vid", "genom", "över", "under", "melan", "bakom", "framför",
+                      "utan, före", "efter", "inom", "utom", "sedan", "menar", "om",
+                      "då, därifrån", "dit", "härifrån","då","oss","jag","ju","får",
+                      "ska","du","vi","oss","ni","er", "till", "också","ta","se","eftersom", "retriever", "sverige")
+  }
+  stopwords
+}
+
+swed_stopwds <- load_stopwords("swedish")
+
+
+
+# Function to preprocess text
+preprocess_text <- function(text, .stem = FALSE, .remNumbers = TRUE, .remPunct = TRUE, .toLower = TRUE, .language = "swedish", .RemStop = TRUE) {
+  # Default values for empty args
+  if (.RemStop) text <- tm::removeWords(text,stopwords("swedish"))
+  if (.toLower) text <- tolower(text)
+  if (.remNumbers) text <- tm::removeNumbers(text)
+  if (.remPunct) text <- tm::removePunctuation(text)
+  if (.stem) {
+    tokens <- stem_tokenizer(text)
+    preprocessed <- lapply(tokens, SnowballC::wordStem, language = .language)
+  } else {
+    preprocessed <- tokenizers::tokenize_words(text)
+  }
+
+  preprocessed
+}
+
+txt_preprocessed <- preprocess_text(filtered_text, .language = "swedish", .stem = T, .remNumbers = T, .toLower = T, .remPunct = T, .RemStop = T)
+
+
+
+
+
+# Convert the text to a Corpus
+corpus_test <- Corpus(VectorSource(txt_preprocessed))
+
+word2vec::txt_clean_word2vec()
+
+library(word2vec)
+# Train Word2Vec model
+model_test <- word2vec(x = txt_preprocessed, dim = 100, #number of features/dimensions
+                        window = 10, #context window size
+                  iter = 10, 
+                  type = "skip-gram",
+                  min_count = 25)
+
+
+nn_test <- predict(model_test, c("vind"), type = "nearest", top_n = 50)
+nn_test
+
+
+emb_test <- as.matrix(model_test)
+vector_test <- emb_test["vindkraft", ] + emb_test["jämtland", ]
+predict(model_test, vector_test, type = "nearest", top_n = 50)
+
+#test end
+#########################################################################
+```
+
+```{r}
+#LDA topic modelling
+
+library(tm)
+library(topicmodels)
+
+dtm <- DocumentTermMatrix(final_clean)
+
+lda_model <- LDA(dtm, k = 10)  # Specify the number of topics (k)
+
+topics <- terms(lda_model, 20)  # Extract the top terms for each of the 5 topics
+print(topics)
+
+# Assign proper column names to topics
+colnames(topics) <- paste("Topic", 1:10)
+
+# Print the structure of topics
+print(str(topics))
+
+library(wordcloud)
+
+# Visualize the most frequent terms for each topic
+for (i in 1:5) {
+  # Extract word frequencies for the current topic
+  topic_freq <- topics[, i]
+  
+  # Remove NAs and negative frequencies
+  topic_freq <- topic_freq[!is.na(topic_freq) & topic_freq >= 0]
+  
+  # Convert frequencies to integers
+  topic_freq <- as.integer(topic_freq)
+  
+  # Extract corresponding word names
+  topic_words <- names(topic_freq)
+  
+  # Create wordcloud with min.freq argument
+  wordcloud(words = topic_words, freq = topic_freq, scale = c(3, 0.5), min.freq = 15, main = paste("Topic", i))
+}
+
+
+
+```
+
+
+```{r}
+library(reticulate)
+
+#load python connection
+```
+
+
+```{python}
+from gensim.models import Word2Vec, KeyedVectors
+
+# Load the pretrained Word2Vec model
+pretrained_model = KeyedVectors.load_word2vec_format('C:/Users/johnn/Desktop/thesis_data/swe_pretrained_model.bin', binary=True)
+
+
+
+
+# small model
+model = Word2Vec(sentences=small_corpus, size=100, window=10, min_count=10, 
+workers=4, epochs=2, sg=1)
+
+# Initialize with pretrained weights
+model.build_vocab([list(pretrained_model.vocab.keys())], update=True)
+model.intersect_word2vec_format('path/to/pretrained_model.bin', binary=True, lockf=1.0)
+model.train(small_corpus, total_examples=model.corpus_count, epochs=10)
+
+
+```
+
+```{r}
+library(tabulizer)
+library(rJava)
+
+# Replace the file path with the actual path to your PDF file
+pdf_file_path <- "C:/Users/johnn/Downloads/537949_Fulltext.pdf"
+
+# Extract tables from the specified pages
+out2 <- extract_tables(pdf_file_path, pages = 24, guess = FALSE, output = "csv")
+
+# Display the structure of the extracted tables
+str(out2)
+
+ny_tbl <- extract_areas(pdf_file_path, 24)
+
+
+nynydf <- as.data.frame(unlisted_tbl)
+```
+
+```{python}
+from gensim.models import Word2Vec, KeyedVectors
+
+# Load the pretrained Word2Vec model
+pretrained_model = KeyedVectors.load_word2vec_format('path/to/pretrained_model.bin', binary=True)
+
+```
+
